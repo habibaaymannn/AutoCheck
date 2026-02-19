@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from AutoCheck.config.System import System
-from AutoCheck.config.YamlObj import YamlObj
+from AutoCheck.config.YamlOBJ.System import System
+from AutoCheck.config.YamlOBJ.YamlObj import YamlObj
 
 
 @dataclass

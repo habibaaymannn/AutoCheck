@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import List
-from AutoCheck.config.HPCState import HPCState
-from AutoCheck.config.YamlObj import YamlObj
+from AutoCheck.config.YamlOBJ.HPCState import HPCState
+from AutoCheck.config.YamlOBJ.YamlObj import YamlObj
 
 
 @dataclass

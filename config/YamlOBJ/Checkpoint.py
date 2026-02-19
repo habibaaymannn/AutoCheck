@@ -1,6 +1,7 @@
 from YamlObj import YamlObj
 from dataclasses import dataclass
 
+
 @dataclass
 class Checkpoint(YamlObj):
     method: str
@@ -13,13 +14,11 @@ class Checkpoint(YamlObj):
     VALID_METHODS = {"time", "iteration", "epoch", "batch", "step"}
 
     def validate(self) -> bool:
-
         if self.method not in self.VALID_METHODS:
             raise ValueError(
                 f"Invalid checkpoint method '{self.method}'. "
                 f"Allowed: {self.VALID_METHODS}"
             )
-
 
         if self.interval <= 0:
             raise ValueError("interval must be > 0")
