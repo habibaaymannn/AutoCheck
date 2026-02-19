@@ -1,5 +1,6 @@
 from YamlObj import YamlObj
 from dataclasses import dataclass
+
 @dataclass
 class Checkpoint(YamlObj):
     method: str
