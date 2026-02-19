@@ -1,34 +1,35 @@
+
 class HPCState:
-    _name: str
-    _type: str
-    _source: str
+    name: str
+    type: str
+    source: str
 
     VALID_TYPES = {"int", "float", "str", "bool"}
 
-    def __init__(self, name, __type, source):
-        self._name = name
-        self._type = __type
-        self._source = source
+    def __init__(self, name, type_, source):
+        self.name = name
+        self.type = type_
+        self.source = source
         self.validate()
 
     def validate(self) -> bool:
 
         # Name validation
-        if not isinstance(self._name, str) or not self._name.strip():
+        if not isinstance(self.name, str) or not self.name.strip():
             raise ValueError("HPCState name must be a non-empty string")
 
         # Type validation
-        if not isinstance(self._type, str):
+        if not isinstance(self.type, str):
             raise ValueError("HPCState type must be a string")
-        self._type = self._type.lower()
-        if self._type not in self.VALID_TYPES:
+        self.type = self.type.lower()
+        if self.type not in self.VALID_TYPES:
             raise ValueError(
-                f"Invalid type '{self._type}'. "
+                f"Invalid type '{self.type}'. "
                 f"Allowed types: {self.VALID_TYPES}"
             )
 
         # Source validation
-        if not isinstance(self._source, str) or not self._source.strip():
+        if not isinstance(self.source, str) or not self.source.strip():
             raise ValueError("HPCState source must be a non-empty string")
 
         return True
