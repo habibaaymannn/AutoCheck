@@ -69,20 +69,12 @@ class ConfigManager:
             raise ConfigParseError("Missing required 'system' section in config")
         
         #step 3: Type Checks before parsing
-        self._ensure_mapping(raw, "system")
-        if "checkpoint" in raw:
-            self._ensure_mapping(raw, "checkpoint")
-        if "ml_model" in raw:
-            self._ensure_mapping(raw, "ml_model")
-        if "notify" in raw:
-            self._ensure_mapping(raw, "notify")
-        if "hpc" in raw:
-            self._ensure_mapping(raw, "hpc")
+        for section in raw:
+            self._ensure_mapping(raw, section)
 
         
         #Parse system first to determine mode
         system = System(**raw["system"])
-        system.validate()
         self.configs.append(system)
 
         mode= system.execution_mode.value if hasattr(system.execution_mode,"value") else system.execution_mode
@@ -112,7 +104,7 @@ class ConfigManager:
         }
 
         allowed_sections = required_sections | OPTIONAL_SECTIONS
-        for key in ("ml_model", "checkpoint", "notify", "hpc"):
+        for key, parser in section_parsers.items():
             if key not in raw:
                 continue
             if key not in allowed_sections:
@@ -172,31 +164,6 @@ class ConfigManager:
                 )   
         except KeyError:
             errors.append("Checkpoint: missing checkpoint config")
-
-        # mode consistency at validation phase too (defensive)
-        try:
-            system = self.get(System)
-            mode = system.execution_mode.value if hasattr(system.execution_mode, "value") else system.execution_mode
-
-            if mode == ExecutionMode.ML.value:
-                try:
-                    self.get(ML)
-                except KeyError:
-                    errors.append("ML mode requires 'ml_model' section")
-                # forbid HPC object in ML mode
-                if any(isinstance(c, HPC) for c in self.configs):
-                    errors.append("ML mode must not include 'hpc' section")
-
-            elif mode == ExecutionMode.HPC.value:
-                try:
-                    self.get(HPC)
-                except KeyError:
-                    errors.append("HPC mode requires 'hpc' section")
-                # forbid ML object in HPC mode
-                if any(isinstance(c, ML) for c in self.configs):
-                    errors.append("HPC mode must not include 'ml_model' section")
-        except KeyError:
-            errors.append("System: missing system config")
 
         if errors:
             raise ConfigValidationError("Configuration validation failed:\n- " + "\n- ".join(errors))
