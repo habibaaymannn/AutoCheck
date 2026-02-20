@@ -1,0 +1,20 @@
+system:
+  execution_mode: ml
+  fram_schd: pytorch
+  run_id: run1
+
+ml_model:
+  name: main_model
+
+checkpoint:
+  method: time
+  interval: 300
+  max_session_time: 900
+  safety_buffer_seconds: 15
+  keep_last: 3
+  save_dir: ./checkpoints
+
+notify:
+  email: user@test.com
+  on_failure: true
+  on_checkpoint: false
