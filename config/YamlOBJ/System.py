@@ -1,4 +1,4 @@
-from YamlObj import YamlObj
+from config.YamlOBJ.YamlObj import YamlObj
 from dataclasses import dataclass
 
 
