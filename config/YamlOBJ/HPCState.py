@@ -1,10 +1,10 @@
+from config.YamlOBJ.enum import StateType
 
 class HPCState:
     name: str
     type: str
     source: str
 
-    VALID_TYPES = {"int", "float", "str", "bool"}
 
     def __init__(self, name, type_, source):
         self.name = name
@@ -22,10 +22,12 @@ class HPCState:
         if not isinstance(self.type, str):
             raise ValueError("HPCState type must be a string")
         self.type = self.type.lower()
-        if self.type not in self.VALID_TYPES:
+
+        allowed_types={e.value for e in StateType}
+        if self.type not in allowed_types:
             raise ValueError(
                 f"Invalid type '{self.type}'. "
-                f"Allowed types: {self.VALID_TYPES}"
+                f"Allowed types: {allowed_types}"
             )
 
         # Source validation
