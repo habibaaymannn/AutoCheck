@@ -1,6 +1,6 @@
 from config.YamlOBJ.YamlObj import YamlObj
 from dataclasses import dataclass
-
+from config.YamlOBJ.enum import CheckpointMethod
 
 @dataclass
 class Checkpoint(YamlObj):
@@ -11,13 +11,16 @@ class Checkpoint(YamlObj):
     safety_buffer_seconds: int = 15
     keep_last: int = 3
 
-    VALID_METHODS = {"time", "iteration", "epoch", "batch", "step"}
-
     def validate(self) -> bool:
-        if self.method not in self.VALID_METHODS:
+        if not isinstance(self.method,str):
+            raise ValueError("method must be a string")
+        self.method=self.method.lower()
+
+        allowed_methods={e.value for e in CheckpointMethod}
+        if self.method not in allowed_methods:
             raise ValueError(
                 f"Invalid checkpoint method '{self.method}'. "
-                f"Allowed: {self.VALID_METHODS}"
+                f"Allowed: {allowed_methods}"
             )
 
         if self.interval <= 0:
