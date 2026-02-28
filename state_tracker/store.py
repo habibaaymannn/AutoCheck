@@ -1,73 +1,52 @@
-from __future__ import annotations
+class StateStore:
 
-import copy
-import threading
-import time
-from typing import Any, Dict
+    def __init__(self, tracked_vars=None, allow_dynamic=True):
+        
+        if tracked_vars is None:
+            tracked_vars = [] 
+        self.tracked_vars = tracked_vars
+        self.allow_dynamic = allow_dynamic
+        self.current_state = {var: None for var in tracked_vars}
 
-from .validation import validate_bulk_data, validate_key, validate_namespace, validate_snapshot
+   
+    def set(self, key, value):
+        
+        if key in self.tracked_vars or self.allow_dynamic:
+            self.current_state[key] = value
+            if self.allow_dynamic and key not in self.tracked_vars:
+                self.tracked_vars.append(key)
+        else:
+            raise KeyError(f"Variable '{key}' is not tracked.")
 
+    
+    def get(self, key, default=None):
+       
+        if key in self.current_state:
+            return self.current_state[key]
+        elif self.allow_dynamic:
+            self.current_state[key] = default
+            self.tracked_vars.append(key)
+            return default
+        else:
+            raise KeyError(f"Variable '{key}' is not tracked.")
 
-class StateTracker:
-    """Thread-safe namespaced store used by runners and controllers."""
+  
+    def remove(self, key):
+       
+        if key in self.current_state:
+            self.current_state.pop(key)
+            if key in self.tracked_vars:
+                self.tracked_vars.remove(key)
+        else:
+            raise KeyError(f"Variable '{key}' not found in state.")
 
-    def __init__(self) -> None:
-        self._state: Dict[str, Dict[str, Any]] = {}
-        self._version = 0
-        self._lock = threading.RLock()
-        self._last_update_time = time.time()
+    
+    def reset(self):
+        
+        for var in self.tracked_vars:
+            self.current_state[var] = None
 
-    # ----------------------------
-    # Update Operations (Runner uses these)
-    # ----------------------------
-    def update(self, namespace: str, key: str, value: Any) -> None:
-        validate_namespace(namespace)
-        validate_key(key)
-        with self._lock:
-            if namespace not in self._state:
-                self._state[namespace] = {}
-            self._state[namespace][key] = value
-            self._version += 1
-            self._last_update_time = time.time()
-
-    def bulk_update(self, namespace: str, data: Dict[str, Any]) -> None:
-        validate_namespace(namespace)
-        validate_bulk_data(data)
-        with self._lock:
-            if namespace not in self._state:
-                self._state[namespace] = {}
-            self._state[namespace].update(data)
-            self._version += 1
-            self._last_update_time = time.time()
-
-    # ----------------------------
-    # Read Operations (Controller uses these)
-    # ----------------------------
-    def get(self, namespace: str, key: str) -> Any:
-        validate_namespace(namespace)
-        validate_key(key)
-        with self._lock:
-            return self._state.get(namespace, {}).get(key)
-
-    def get_namespace(self, namespace: str) -> Dict[str, Any]:
-        validate_namespace(namespace)
-        with self._lock:
-            return copy.deepcopy(self._state.get(namespace, {}))
-
-    def snapshot(self) -> Dict[str, Any]:
-        with self._lock:
-            return {
-                "version": self._version,
-                "timestamp": self._last_update_time,
-                "state": copy.deepcopy(self._state),
-            }
-
-    # ----------------------------
-    # Restore Operation (Controller triggers)
-    # ----------------------------
-    def restore(self, snapshot_data: Dict[str, Any]) -> None:
-        validate_snapshot(snapshot_data)
-        with self._lock:
-            self._state = copy.deepcopy(snapshot_data["state"])
-            self._version = int(snapshot_data["version"])
-            self._last_update_time = time.time()
+   
+    def all(self):
+        
+        return self.current_state.copy()
