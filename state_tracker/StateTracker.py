@@ -14,6 +14,7 @@ from state_tracker.errors import (
     StoreContractError,
 )
 from state_tracker.Models import StateSnapshot, TrackedStateSpec
+from state_tracker.Store.StateStore import StateStore
 
 
 class StateTracker(ABC):
@@ -32,7 +33,7 @@ class StateTracker(ABC):
         run_id: str,
         # provider: StateProvider,
         tracked_states: Sequence[TrackedStateSpec],
-        # store: Optional[Store] = None,
+        store: Optional[StateStore] = None,
     ) -> None:
         if not run_id or not isinstance(run_id, str):
             raise ValueError("run_id must be a non-empty string")
