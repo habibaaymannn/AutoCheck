@@ -6,78 +6,75 @@ from pathlib import Path
 from typing import Optional
 
 from state_tracker.Models import StateSnapshot
+from state_tracker.Store.StateStore import StateStore
 from state_tracker.errors import StoreContractError
-from Store.StateStore import StateStore
+
 
 class PickleStateStore(StateStore):
     """
     Thread-safe pickle-based state store.
-    Stores a full StateSnapshot object.
+    Stores one latest StateSnapshot.
     """
-    def __init__(self,filename:str="state,pkl")->None:
-        self.filename=Path(filename)
-        self._lock=threading.RLock()
 
-    #Public API
-    def save(self, snapshot:StateSnapshot)->None:
-        #Persist a StateSnapshot atomically.
-        if not isinstance(snapshot,StateSnapshot):
+    def __init__(self, filename: str = "state.pkl") -> None:
+        self.filename = Path(filename)
+        self._lock = threading.RLock()
+
+    def save(self, snapshot: StateSnapshot) -> None:
+        if not isinstance(snapshot, StateSnapshot):
             raise StoreContractError("Only StateSnapshot instances can be saved")
+
         with self._lock:
             try:
-                tmp_file=self.filename.with_suffix(".tmp")
-
-                #write tmp then replace
-                with tmp_file.open("wb")as f:
-                    pickle.dump(snapshot.to_dict(),f)
-
+                self.filename.parent.mkdir(parents=True, exist_ok=True)
+                tmp_file = self.filename.with_suffix(".tmp")
+                with tmp_file.open("wb") as f:
+                    pickle.dump(snapshot.to_dict(), f, protocol=pickle.HIGHEST_PROTOCOL)
                 tmp_file.replace(self.filename)
-
             except Exception as exc:
-                raise StoreContractError(
-                    f"Failed to save snapshot to {self.filename}"
-                ) from exc
-    
-    def load(self)->Optional[StateSnapshot]:
-        #Load latest snapshot if exists.
+                raise StoreContractError(f"Failed to save snapshot to {self.filename}") from exc
+
+    def load(self) -> Optional[StateSnapshot]:
         with self._lock:
             if not self.filename.exists():
                 return None
-            
             try:
                 with self.filename.open("rb") as f:
-                    raw_data=pickle.load(f)
+                    raw_data = pickle.load(f)
                 return StateSnapshot.from_mapping(raw_data)
             except Exception as exc:
-                raise StoreContractError(
-                    f"Failed to load snapshot from {self.filename}"
-                ) from exc
-            
-    def reset(self)->None:
-        #Delete stored state.
+                raise StoreContractError(f"Failed to load snapshot from {self.filename}") from exc
+
+    def reset(self) -> None:
         with self._lock:
             if self.filename.exists():
                 try:
                     self.filename.unlink()
                 except Exception as exc:
-                    raise StoreContractError(
-                        f"Failed to reset store {self.filename}"
-                    ) from exc
-                
+                    raise StoreContractError(f"Failed to reset store {self.filename}") from exc
 
-    # Optional HPC stop flag
     @property
-    def stop_flag(self)->bool:
+    def stop_flag(self) -> bool:
         snapshot = self.load()
-        if snapshot and "stop_flag" in snapshot.states:
-            return bool(snapshot.states["stop_flag"])
-        return False
-    
+        if snapshot is None:
+            return False
+        return bool(snapshot.states.get("stop_flag", False))
+
     @stop_flag.setter
     def stop_flag(self, value: bool) -> None:
         snapshot = self.load()
         if snapshot is None:
             raise StoreContractError("Cannot set stop_flag without existing snapshot")
 
-        snapshot.states["stop_flag"] = bool(value)
-        self.save(snapshot)
+        new_states = dict(snapshot.states)
+        new_states["stop_flag"] = bool(value)
+
+        updated = StateSnapshot(
+            run_id=snapshot.run_id,
+            mode=snapshot.mode,
+            states=new_states,
+            captured_at_utc=snapshot.captured_at_utc,
+            schema_version=snapshot.schema_version,
+            metadata=dict(snapshot.metadata),
+        )
+        self.save(updated)

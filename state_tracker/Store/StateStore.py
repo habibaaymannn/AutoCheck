@@ -4,7 +4,6 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 from state_tracker.Models import StateSnapshot
-from state_tracker.errors import StoreContractError
 
 
 # Abstract Store Interface

@@ -4,21 +4,22 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Mapping
 
+
 @dataclass(frozen=True)
 class TrackedStateSpec:
-    name:str
-    type:str
+    name: str
+    type_name: str
     source: str
 
-    def normalized_type(self)->str:
+    def normalized_type(self) -> str:
         return self.type_name.strip().lower()
-    
+
 
 @dataclass(frozen=True)
 class StateSnapshot:
     run_id: str
     mode: str
-    states:Dict[str,Any]
+    states: Dict[str, Any]
     captured_at_utc: str = field(
         default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
     )
@@ -34,7 +35,7 @@ class StateSnapshot:
             "states": dict(self.states),
             "metadata": dict(self.metadata),
         }
-    
+
     @staticmethod
     def from_mapping(data: Mapping[str, Any]) -> "StateSnapshot":
         return StateSnapshot(
