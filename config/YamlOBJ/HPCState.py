@@ -1,4 +1,4 @@
-from config.YamlOBJ.enum import StateType
+from enums import StateType
 
 class HPCState:
     name: str
