@@ -1,6 +1,6 @@
 from config.YamlOBJ.YamlObj import YamlObj
 from dataclasses import dataclass
-from config.YamlOBJ.enum import CheckpointMethod
+from enums import CheckpointMethod
 
 @dataclass
 class Checkpoint(YamlObj):

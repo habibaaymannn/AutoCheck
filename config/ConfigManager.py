@@ -8,8 +8,7 @@ from config.YamlOBJ.Notify import Notify
 from config.YamlOBJ.HPC import HPC
 from config.YamlOBJ.HPCState import HPCState
 from config.YamlOBJ.ML import ML
-from config.YamlOBJ.enum import ExecutionMode
-
+from enums import ExecutionMode
 
 class ConfigParseError(Exception):
     pass
@@ -155,13 +154,10 @@ class ConfigManager:
         try:
             checkpoint=self.get(Checkpoint)
             if checkpoint.interval >= checkpoint.max_session_time:
-                errors.append(
-                    "Checkpoint: interval must be smaller than max_session_time"
-                )
+                errors.append("Checkpoint: interval must be smaller than max_session_time")
+
             if checkpoint.safety_buffer_seconds >= checkpoint.max_session_time:
-                errors.append(
-                    "Checkpoint: safety_buffer_seconds must be smaller than max_session_time"
-                )   
+                errors.append("Checkpoint: safety_buffer_seconds must be smaller than max_session_time")
         except KeyError:
             errors.append("Checkpoint: missing checkpoint config")
 

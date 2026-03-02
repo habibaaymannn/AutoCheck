@@ -1,0 +1,11 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IntelliJ
+.idea/
+
+# Virtual environments
+.venv/
+venv/
