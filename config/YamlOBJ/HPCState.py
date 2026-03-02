@@ -8,7 +8,7 @@ class HPCState:
 
     def __init__(self, name, type_, source):
         self.name = name
-        self.type = type_
+        self.type = type_.strip().lower()
         self.source = source
         self.validate()
 
