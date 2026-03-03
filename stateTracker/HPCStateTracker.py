@@ -10,6 +10,7 @@ from error import (
 
 )
 from stateTracker.BaseTracker import BaseTracker
+from logger import setup_logger
 
 class HPCStateTracker(BaseTracker):
     def __init__(
@@ -20,6 +21,7 @@ class HPCStateTracker(BaseTracker):
             scheduler: Optional[str] = None,
             ):
         super().__init__(run_id=run_id, method=method)
+        self.logger = setup_logger(self.__class__.__name__, run_id)
         self.scheduler: Optional[str] = scheduler
         self.states: list[HPCState] = list(tracked_states)
         self.tracked_states: Dict[str, Any] = {}
@@ -30,11 +32,15 @@ class HPCStateTracker(BaseTracker):
         self.latest_checkpoint_path: Optional[str]=None
 
         self.validate()
+        self.logger.info(f"HPCStateTracker initialized | run_id={run_id} | method={method}")
+
 
     def set_states(self, tracked_states: Sequence[HPCState]) -> None:
         with self.lock:
             self.states = list(tracked_states)
             self.validate()
+            self.logger.info(f"Tracked states updated | states={[s.name for s in self.states]}")
+
     
     
     def update_chpnt_method(self) -> None:
@@ -47,6 +53,10 @@ class HPCStateTracker(BaseTracker):
             self.iteration = prov_state.get("iteration", self.iteration)
             self.last_completed_unit = prov_state.get(
                 "last_completed_unit", self.last_completed_unit
+            )
+            self.logger.info(
+                f"Checkpoint fields updated | iteration={self.iteration} "
+                f"last_completed_unit={self.last_completed_unit}"
             )
 
 
@@ -72,6 +82,10 @@ class HPCStateTracker(BaseTracker):
             self.latest_checkpoint_path = prov_state.get(
                 "latest_checkpoint_path", self.latest_checkpoint_path
             )
+            self.logger.info(
+                f"All HPC states updated from provider | iteration={self.iteration} "
+                f"last_completed_unit={self.last_completed_unit} | scheduler_status={self.scheduler_status}"
+            )
 
 
     def snapshot(self) -> Dict[str, Any]:
@@ -87,6 +101,8 @@ class HPCStateTracker(BaseTracker):
                 "latest_checkpoint_path": self.latest_checkpoint_path,
                 "tracked_states": dict(self.tracked_states),
             }
+            self.logger.info(f"Snapshot taken | iteration={self.iteration} last_completed_unit={self.last_completed_unit}")
+            return snap
         
         
     def set_all_from_chpnt(self, state: Dict[str, Any]) -> None:
@@ -101,6 +117,10 @@ class HPCStateTracker(BaseTracker):
                 self.tracked_states = saved_tracked
             else:
                 self.tracked_states = {}
+            self.logger.info(
+                f"Tracker state restored from checkpoint | iteration={self.iteration} "
+                f"last_completed_unit={self.last_completed_unit} | scheduler_status={self.scheduler_status}"
+            )
 
     # validate there is states to be tracked, all states are in HPC state format & no duplicate
     def validate(self) -> bool:
@@ -120,4 +140,5 @@ class HPCStateTracker(BaseTracker):
             if s.name in names:
                 raise InvalidTrackedStateSpecError(f"Duplicate state name: {s.name}")
             names.add(s.name)
+        self.logger.info(f"Validation passed | tracked_states={[s.name for s in self.states]} | method={self.method}")
         return True
