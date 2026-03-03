@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-from datetime import datetime
 from typing import Any, Dict, Mapping, Optional, Sequence
 
 from config.YamlOBJ.HPCState import HPCState
@@ -46,8 +44,13 @@ class HPCStateTracker(BaseTracker):
     def update_chpnt_method(self) -> None:
         with self.lock:
             if self.provider is None:
+                self.logger.error("Provider is not set in update_chpnt_method")
                 raise RuntimeError("Provider is not set.")
-            prov_state: Dict[str, Any] = self.provider.get_state()
+            try:
+                prov_state: Dict[str, Any] = self.provider.get_state()
+            except Exception:
+                self.logger.exception("Failed to fetch provider state in update_chpnt_method")
+                raise
 
             # Only update checkpoint-related progress fields
             self.iteration = prov_state.get("iteration", self.iteration)
@@ -63,8 +66,13 @@ class HPCStateTracker(BaseTracker):
     def update_all_from_prov(self) -> None:
         with self.lock:
             if self.provider is None:
+                self.logger.error("Provider is not set in update_all_from_prov")
                 raise RuntimeError("Provider is not set.")
-            prov_state: Dict[str, Any] = self.provider.get_state()
+            try:
+                prov_state: Dict[str, Any] = self.provider.get_state()
+            except Exception:
+                self.logger.exception("Failed to fetch provider state in update_all_from_prov")
+                raise
 
             # update dynamic states
             for state in self.states:
@@ -90,7 +98,7 @@ class HPCStateTracker(BaseTracker):
 
     def snapshot(self) -> Dict[str, Any]:
         with self.lock:
-            return {
+            snap = {
                 "run_id": self.run_id,
                 "method": self.method,
                 "scheduler": self.scheduler,
@@ -101,12 +109,21 @@ class HPCStateTracker(BaseTracker):
                 "latest_checkpoint_path": self.latest_checkpoint_path,
                 "tracked_states": dict(self.tracked_states),
             }
-            self.logger.info(f"Snapshot taken | iteration={self.iteration} last_completed_unit={self.last_completed_unit}")
+            self.logger.info(
+                "Snapshot taken | iteration=%s | last_completed_unit=%s | tracked_count=%s",
+                self.iteration, self.last_completed_unit, len(self.tracked_states)
+            )
+            self.logger.debug("Snapshot keys: %s", list(snap.keys()))
             return snap
+
         
         
     def set_all_from_chpnt(self, state: Dict[str, Any]) -> None:
         with self.lock:
+            if not isinstance(state, dict):
+                self.logger.error("Invalid checkpoint payload type: %s", type(state).__name__)
+                raise RuntimeError("Checkpoint payload must be a dict")
+            
             self.iteration = state.get("iteration", 0)
             self.last_completed_unit = state.get("last_completed_unit", 0)
             self.scheduler_status = state.get("scheduler_status", "unknown")
@@ -116,19 +133,23 @@ class HPCStateTracker(BaseTracker):
             if isinstance(saved_tracked, dict):
                 self.tracked_states = saved_tracked
             else:
+                self.logger.warning("Invalid tracked_states in checkpoint (not dict). Resetting to empty.")
                 self.tracked_states = {}
             self.logger.info(
                 f"Tracker state restored from checkpoint | iteration={self.iteration} "
                 f"last_completed_unit={self.last_completed_unit} | scheduler_status={self.scheduler_status}"
             )
+            self.logger.debug("Checkpoint payload keys: %s", list(state.keys()))
 
     # validate there is states to be tracked, all states are in HPC state format & no duplicate
     def validate(self) -> bool:
         if not self.states:
+            self.logger.error("Validation failed: no tracked states configured")
             raise InvalidTrackedStateSpecError("No tracked states configured")
 
         allowed_methods = {m.value for m in CheckpointMethod}
         if self.method not in allowed_methods:
+            self.logger.error("Validation failed: unsupported checkpoint method '%s'", self.method)
             raise InvalidTrackedStateSpecError(
                 f"Unsupported checkpoint method '{self.method}'. Allowed: {sorted(allowed_methods)}"
             )
@@ -136,8 +157,10 @@ class HPCStateTracker(BaseTracker):
         names = set()
         for s in self.states:
             if not isinstance(s, HPCState):
+                self.logger.error("Validation failed: invalid state spec type %s", type(s).__name__)
                 raise InvalidTrackedStateSpecError("All specs must be HPC State")
             if s.name in names:
+                self.logger.error("Validation failed: duplicate state name '%s'", s.name)
                 raise InvalidTrackedStateSpecError(f"Duplicate state name: {s.name}")
             names.add(s.name)
         self.logger.info(f"Validation passed | tracked_states={[s.name for s in self.states]} | method={self.method}")
