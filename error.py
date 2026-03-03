@@ -1,4 +1,3 @@
-
 class StateTrackerError(Exception):
     """Base exception for state tracker module."""
 
@@ -17,7 +16,3 @@ class MissingStateValueError(StateTrackerError):
 
 class StateTypeCoercionError(StateTrackerError):
     """Raised when a state value cannot be coerced to expected type."""
-
-
-class StoreContractError(StateTrackerError):
-    """Raised when store operations fail."""
