@@ -36,6 +36,72 @@ class HPCStateTracker(BaseTracker):
             self.states = list(tracked_states)
             self.validate()
     
+    
+    def update_chpnt_method(self) -> None:
+        with self.lock:
+            if self.provider is None:
+                raise RuntimeError("Provider is not set.")
+            prov_state: Dict[str, Any] = self.provider.get_state()
+
+            # Only update checkpoint-related progress fields
+            self.iteration = prov_state.get("iteration", self.iteration)
+            self.last_completed_unit = prov_state.get(
+                "last_completed_unit", self.last_completed_unit
+            )
+
+
+    def update_all_from_prov(self) -> None:
+        with self.lock:
+            if self.provider is None:
+                raise RuntimeError("Provider is not set.")
+            prov_state: Dict[str, Any] = self.provider.get_state()
+
+            # update dynamic states
+            for state in self.states:
+                self.tracked_states[state.name] = prov_state.get(
+                    state.name, self.tracked_states.get(state.name)
+                )
+
+            self.iteration = prov_state.get("iteration", self.iteration)
+            self.last_completed_unit = prov_state.get(
+                "last_completed_unit", self.last_completed_unit
+            )
+            self.scheduler_status = prov_state.get(
+                "scheduler_status", self.scheduler_status
+            )
+            self.latest_checkpoint_path = prov_state.get(
+                "latest_checkpoint_path", self.latest_checkpoint_path
+            )
+
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self.lock:
+            return {
+                "run_id": self.run_id,
+                "method": self.method,
+                "scheduler": self.scheduler,
+                "start_time": self.start_time.isoformat(),
+                "iteration": self.iteration,
+                "last_completed_unit": self.last_completed_unit,
+                "scheduler_status": self.scheduler_status,
+                "latest_checkpoint_path": self.latest_checkpoint_path,
+                "tracked_states": dict(self.tracked_states),
+            }
+        
+        
+    def set_all_from_chpnt(self, state: Dict[str, Any]) -> None:
+        with self.lock:
+            self.iteration = state.get("iteration", 0)
+            self.last_completed_unit = state.get("last_completed_unit", 0)
+            self.scheduler_status = state.get("scheduler_status", "unknown")
+            self.latest_checkpoint_path = state.get("latest_checkpoint_path")
+
+            saved_tracked = state.get("tracked_states", {})
+            if isinstance(saved_tracked, dict):
+                self.tracked_states = saved_tracked
+            else:
+                self.tracked_states = {}
+
     # validate there is states to be tracked, all states are in HPC state format & no duplicate
     def validate(self) -> bool:
         if not self.states:
