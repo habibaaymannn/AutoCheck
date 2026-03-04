@@ -128,7 +128,7 @@ class MLStateTracker(BaseTracker):
                 self.logger.error(f"[UPDATE_ALL] | Failed to update all fields | reason={e}")
                 raise e
 
-    def set_all_from_chpnt(self, state: Dict[str, Any]) -> None:
+    def set_all_from_ckpt(self, state: Dict[str, Any]) -> None:
         with self.lock:
             if not isinstance(state, dict):
                 self.logger.error(f"[RESTORE] | Checkpoint restore failed | invalid type={type(state).__name__}")
