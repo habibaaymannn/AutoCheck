@@ -41,7 +41,7 @@ class HPCStateTracker(BaseTracker):
 
     
     
-    def update_chpnt_method(self) -> None:
+    def update_ckpt_method(self) -> None:
         with self.lock:
             if self.provider is None:
                 self.logger.error("Provider is not set in update_chpnt_method")
@@ -118,7 +118,7 @@ class HPCStateTracker(BaseTracker):
 
         
         
-    def set_all_from_chpnt(self, state: Dict[str, Any]) -> None:
+    def set_all_from_ckpt(self, state: Dict[str, Any]) -> None:
         with self.lock:
             if not isinstance(state, dict):
                 self.logger.error("Invalid checkpoint payload type: %s", type(state).__name__)
