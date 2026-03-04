@@ -17,7 +17,7 @@ class BaseTracker(ABC):
             self.provider = provider
 
     @abstractmethod
-    def update_chpnt_method(self) -> None:
+    def update_ckpt_method(self) -> None:
         pass
 
     @abstractmethod
@@ -29,7 +29,7 @@ class BaseTracker(ABC):
         pass
 
     @abstractmethod
-    def set_all_from_chpnt(self, state: Dict[str, Any]) -> None:
+    def set_all_from_ckpt(self, state: Dict[str, Any]) -> None:
         pass
 
     @abstractmethod
