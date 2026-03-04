@@ -27,7 +27,7 @@ class MLStateTracker(BaseTracker):
             f"[SET_PROVIDER] | provider={type(provider).__name__}"
         )
 
-    def update_chpnt_method(self) -> None:
+    def update_ckpt_method(self) -> None:
         with self.lock:
             if self.provider is None:
                 self.logger.error("[UPDATE_METHOD] | Provider not set")
