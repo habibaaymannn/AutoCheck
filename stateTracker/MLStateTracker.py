@@ -22,7 +22,7 @@ class MLStateTracker(BaseTracker):
         self.logger.info(f"MLStateTracker initialised | run_id={run_id} | method={method}")
 
     def set_provider(self, provider: Provider) -> None:
-        self.provider = provider
+        super().set_provider(provider)
         self.logger.info(
             f"[SET_PROVIDER] | provider={type(provider).__name__}"
         )
