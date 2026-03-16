@@ -101,9 +101,12 @@ class TraceLayer(BaseLayer):
         Called only when a checkpoint is actually triggered.
         """
         with self._lock:
-            result: Dict[str, Any] = dict(self._captured)  # scalars first
-
-            for name, obj in self._objects.items():
+            scalars  = dict(self._captured)
+            obj_refs = dict(self._objects)
+    
+        result: Dict[str, Any] = dict(scalars)
+        for name, obj in obj_refs.items():
+        
                 try:
                     result[name] = copy.deepcopy(obj.state_dict())
                     self.logger.debug(f"[SNAPSHOT] | serialized {name}")
