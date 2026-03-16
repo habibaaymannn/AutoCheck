@@ -164,10 +164,8 @@ class TraceLayer(BaseLayer):
         Ignoring line events means no per-line overhead.
         """
         if event == "line":
-            locals_ = frame.f_locals
-            for var in self._watched_vars:
-                if var in locals_:
-                    self._captured[var] = locals_[var]
+            self._extract(frame)
+        return self._local_trace
 
     def _extract(self, frame: Any) -> None:
         """
