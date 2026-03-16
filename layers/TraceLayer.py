@@ -163,9 +163,11 @@ class TraceLayer(BaseLayer):
         populated with the final values of all local variables.
         Ignoring line events means no per-line overhead.
         """
-        if event == "return":
-            self._extract(frame)
-        return self._local_trace
+        if event == "line":
+            locals_ = frame.f_locals
+            for var in self._watched_vars:
+                if var in locals_:
+                    self._captured[var] = locals_[var]
 
     def _extract(self, frame: Any) -> None:
         """
@@ -199,8 +201,7 @@ class TraceLayer(BaseLayer):
                 found_objects[name] = value
 
         # only update scalars if we found something meaningful
-        # (epoch or global_step present = we're in the training loop)
-        if "epoch" in found_scalars or "global_step" in found_scalars:
+        if found_scalars:
             with self._lock:
                 self._captured.update(found_scalars)
                 if found_scalars:
