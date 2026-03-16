@@ -163,7 +163,7 @@ class TraceLayer(BaseLayer):
         populated with the final values of all local variables.
         Ignoring line events means no per-line overhead.
         """
-        if event == "line":
+        if event in ("line", "return"):
             locals_ = frame.f_locals
             found = {
                 var: locals_[var]
