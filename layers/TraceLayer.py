@@ -164,7 +164,16 @@ class TraceLayer(BaseLayer):
         Ignoring line events means no per-line overhead.
         """
         if event == "line":
-            self._extract(frame)
+            locals_ = frame.f_locals
+            found = {
+                var: locals_[var]
+                for var in self._watched_vars
+                if var in locals_
+            }
+            if found:
+                with self._lock:
+                    self._captured.update(found)
+
         return self._local_trace
 
     def _extract(self, frame: Any) -> None:
@@ -172,13 +181,13 @@ class TraceLayer(BaseLayer):
         Read f_locals from a returning frame and update both stores.
 
           - Scalars: if name is in _watched_vars and value is int/float
-                     → store in _captured directly
+                     → collect in found_scalars and then store in _captured
           - Objects: if value has .state_dict() and name is in _watched_objs
                      → store live reference in _objects (once only)
 
-        Only updates _captured if at least one critical counter
-        (epoch or global_step) is present — avoids storing partial
-        state from helper functions.
+        Scalars are updated whenever at least one watched scalar is
+        present in the frame's locals. This may include values coming
+        from helper functions as long as they expose watched scalars.
         """
         locals_ = frame.f_locals
         found_scalars: Dict[str, Any] = {}
