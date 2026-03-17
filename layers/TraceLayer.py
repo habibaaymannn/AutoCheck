@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import copy
+import ctypes
 import sys
 import threading
 from typing import Any, Dict, List, Set
 
-from BaseLayer import BaseLayer
+from layers.BaseLayer import BaseLayer
 from logger import setup_logger
 
 
@@ -52,6 +53,7 @@ class TraceLayer(BaseLayer):
 
         self._captured: Dict[str, Any] = {}  # scalars: {"epoch": 7, "loss": 0.4}
         self._objects: Dict[str, Any] = {}  # live refs: {"model": <ResNet>, ...}
+        self._pending_restore: Dict[str, Any] = {}
 
     def attach(self) -> None:
         """
@@ -81,6 +83,7 @@ class TraceLayer(BaseLayer):
             threading.settrace(None)
             self._captured.clear()
             self._objects.clear()
+            self._pending_restore.clear()
             self._set_active(False)
             self.logger.info("[DETACH] | TraceLayer detached | all references released")
 
@@ -101,12 +104,8 @@ class TraceLayer(BaseLayer):
         Called only when a checkpoint is actually triggered.
         """
         with self._lock:
-            scalars  = dict(self._captured)
-            obj_refs = dict(self._objects)
-    
-        result: Dict[str, Any] = dict(scalars)
-        for name, obj in obj_refs.items():
-        
+            result: Dict[str, Any] = dict(self._captured)
+            for name, obj in self._objects.items():
                 try:
                     result[name] = copy.deepcopy(obj.state_dict())
                     self.logger.debug(f"[SNAPSHOT] | serialized {name}")
@@ -123,22 +122,31 @@ class TraceLayer(BaseLayer):
 
     def restore(self, snapshot: Dict[str, Any]) -> None:
         """
-        Push saved object states back into live objects via .load_state_dict().
-        Scalars (epoch, batch_idx) are NOT restored here — the controller
-        handles those by telling the loop where to resume from.
-        Called on job resume before training restarts.
+        Arm _pending_restore with saved state for both scalars and objects.
+
+        Scalars → written back into frames via PyFrame_LocalsToFast
+                  the moment they appear in f_locals in _extract()
+        Objects → .load_state_dict() called the moment the object
+                  is discovered in f_locals by _extract()
+
+        Nothing is applied immediately here — everything is deferred
+        because the user's script hasn't run yet so _objects is empty
+        at the time restore() is called.
         """
         with self._lock:
-            for name, obj in self._objects.items():
+            for name in self._watched_vars:
                 if name in snapshot:
-                    try:
-                        obj.load_state_dict(snapshot[name])
-                        self.logger.info(f"[RESTORE] | restored {name}")
-                    except Exception as e:
-                        self.logger.error(f"[RESTORE] | failed to restore {name} | reason={e}")
-                        raise
+                    self._pending_restore[name] = snapshot[name]
+                    self.logger.info(f"[RESTORE] | armed scalar | {name}")
                 else:
-                    self.logger.warning(f"[RESTORE] | {name} not found in snapshot — skipped")
+                    self.logger.warning(f"[RESTORE] | scalar {name} not found in snapshot — skipped")
+
+            for name in self._watched_objs:
+                if name in snapshot:
+                    self._pending_restore[name] = snapshot[name]
+                    self.logger.info(f"[RESTORE] | armed object | {name}")
+                else:
+                    self.logger.warning(f"[RESTORE] | object {name} not found in snapshot — skipped")
 
     # ------------------------------------------------------------------
     # Trace hook internals
@@ -167,41 +175,17 @@ class TraceLayer(BaseLayer):
         Ignoring line events means no per-line overhead.
         """
         if event in ("line", "return"):
-            locals_ = frame.f_locals
-            found = {
-                var: locals_[var]
-                for var in self._watched_vars
-                if var in locals_
-            }
-            if found:
-                with self._lock:
-                    self._captured.update(found)
-
+            self._extract(frame)
         return self._local_trace
 
     def _extract(self, frame: Any) -> None:
-        """
-        Read f_locals from a returning frame and update both stores.
-
-          - Scalars: if name is in _watched_vars and value is int/float
-                     → collect in found_scalars and then store in _captured
-          - Objects: if value has .state_dict() and name is in _watched_objs
-                     → store live reference in _objects (once only)
-
-        Scalars are updated whenever at least one watched scalar is
-        present in the frame's locals. This may include values coming
-        from helper functions as long as they expose watched scalars.
-        """
         locals_ = frame.f_locals
         found_scalars: Dict[str, Any] = {}
         found_objects: Dict[str, Any] = {}
 
         for name, value in locals_.items():
-            # scalar capture
             if name in self._watched_vars and isinstance(value, (int, float)):
                 found_scalars[name] = value
-
-            # object discovery — only once per object name
             if (
                     name in self._watched_objs
                     and name not in self._objects
@@ -210,22 +194,46 @@ class TraceLayer(BaseLayer):
             ):
                 found_objects[name] = value
 
-        # only update scalars if we found something meaningful
+        if not found_scalars and not found_objects:
+            return
+
+        # ── RESTORE scalars ───────────────────────
+        needs_sync = False
+        with self._lock:
+            for name in list(found_scalars.keys()):
+                if name in self._pending_restore:
+                    saved = self._pending_restore.pop(name)
+                    frame.f_locals[name] = saved
+                    found_scalars[name] = saved
+                    needs_sync = True
+                    self.logger.info(f"[RESTORE] | frame writeback | {name} → {saved}")
+
+        if needs_sync:
+            ctypes.pythonapi.PyFrame_LocalsToFast(
+                ctypes.py_object(frame),
+                ctypes.c_int(0)
+            )
+
+        # ── CAPTURE scalars ───────────────────────────────────────────
         if found_scalars:
             with self._lock:
                 self._captured.update(found_scalars)
-                if found_scalars:
-                    self.logger.debug(f"[EXTRACT] | scalars updated | {found_scalars}")
+                self.logger.debug(f"[EXTRACT] | scalars updated | {found_scalars}")
 
-        # register newly discovered objects
+        # ── DISCOVER objects ──────────────────────────────────────────────
         if found_objects:
             with self._lock:
                 for name, obj in found_objects.items():
                     self._objects[name] = obj
-                    self.logger.info(
-                        f"[EXTRACT] | object discovered | "
-                        f"name={name} | type={type(obj).__name__}"
-                    )
+                    self.logger.info(f"[EXTRACT] | object discovered | name={name} | type={type(obj).__name__}")
+                    if name in self._pending_restore:
+                        saved = self._pending_restore.pop(name)
+                        try:
+                            obj.load_state_dict(saved)
+                            self.logger.info(f"[RESTORE] | load_state_dict applied | {name}")
+                        except Exception as e:
+                            self.logger.error(f"[RESTORE] | load_state_dict failed | name={name} | reason={e}")
+                            raise RuntimeError(f"[RESTORE] | load_state_dict failed | name={name} | reason={e}") from e
 
     def is_ready(self) -> bool:
         """

@@ -26,6 +26,7 @@ class BaseLayer(ABC):
         self.poll_target: List[str] = poll_target
         self.snapshot_target: List[str] = snapshot_target
         self._lock: threading.RLock = threading.RLock()
+        self._pending_restore: Dict[str, Any] = {}
 
     @abstractmethod
     def attach(self) -> None:
