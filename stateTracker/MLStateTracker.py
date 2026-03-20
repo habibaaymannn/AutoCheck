@@ -1,6 +1,6 @@
 from typing import Dict, Any, Optional
 
-from provider import Provider
+from provider.Provider import Provider
 from stateTracker.BaseTracker import BaseTracker
 from logger import setup_logger
 
@@ -8,8 +8,8 @@ _INT_FIELDS = ("epoch", "global_step", "batch_idx")
 
 
 class MLStateTracker(BaseTracker):
-    def __init__(self, run_id: str, method: str):
-        super().__init__(run_id, method)
+    def __init__(self, method: str, program_path: str ,run_id: str = "default"):
+        super().__init__(method=method, program_path=program_path, run_id=run_id)
         self.logger = setup_logger(self.__class__.__name__, run_id)
         self.model_state: Dict[str, Any] = {}
         self.optimizer_state: Dict[str, Any] = {}
@@ -19,23 +19,24 @@ class MLStateTracker(BaseTracker):
         self.batch_idx: int = 0
         self.rng_state: Dict[str, Any] = {}
         self.amp: Dict[str, Any] = {}
+        self._init_provider()
         self.logger.info(f"MLStateTracker initialised | run_id={run_id} | method={method}")
 
-    def set_provider(self, provider: Provider) -> None:
-        super().set_provider(provider)
-        self.logger.info(
-            f"[SET_PROVIDER] | provider={type(provider).__name__}"
-        )
+    def _init_provider(self):
+        poll_list = ["epoch", "global_step", "batch_idx"]
+        target_list = ["model", "optimizer", "scheduler", "rng_state", "amp"]
+        self.provider = Provider(self.program_path, self.method, poll_list, target_list)
 
     def update_ckpt_method(self) -> None:
         with self.lock:
             if self.provider is None:
                 self.logger.error("[UPDATE_METHOD] | Provider not set")
-                raise RuntimeError("Provider is not set.")
+                self.logger.error("[UPDATE_METHOD] | initializing Provider")
+                self._init_provider()
 
             self.logger.debug("[UPDATE_METHOD] | Fetching provider state")
             try:
-                prov_state = self.provider.fetch_ckpnt()
+                prov_state = self.provider.fetch_ckpt()
                 if not isinstance(prov_state, dict):
                     self.logger.error(
                         f"[UPDATE_METHOD] | Invalid provider state type | "
@@ -67,6 +68,7 @@ class MLStateTracker(BaseTracker):
                 raise
 
     def snapshot(self) -> Dict[str, Any]:
+        self.update_all_from_prov()
         with self.lock:
             state: Dict[str, Any] = {
                 "run_id": self.run_id,
@@ -134,6 +136,7 @@ class MLStateTracker(BaseTracker):
                 self.logger.error(f"[RESTORE] | Checkpoint restore failed | invalid type={type(state).__name__}")
                 raise TypeError("Checkpoint state must be a dictionary.")
 
+            self.provider.restore(state)
             try:
                 required_fields = ["model_state", "optimizer_state", "epoch", "global_step", "batch_idx"]
                 missing = [f for f in required_fields if f not in state]

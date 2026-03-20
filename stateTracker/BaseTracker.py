@@ -5,12 +5,20 @@ from threading import RLock
 from datetime import datetime
 
 class BaseTracker(ABC):
-    def __init__(self, run_id: str, method: str):
+    def __init__(self, method: str, program_path: str ,run_id: str = "default"):
         self.run_id: str = run_id
         self.provider: Optional[Provider] = None
         self.lock = RLock()
         self.start_time: datetime = datetime.now()
         self.method: str = method
+        self.program_path: str = program_path
+
+    @abstractmethod
+    def _init_provider(self):
+        pass
+
+    def run_tracer(self):
+        self.provider.run_tracer()
 
     def set_provider(self, provider: Provider) -> None:
         with self.lock:
