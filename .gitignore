@@ -9,4 +9,9 @@ __pycache__/
 # Virtual environments
 .venv/
 venv/
+<<<<<<< Updated upstream
 Description.md
+=======
+
+tracing_how/
+>>>>>>> Stashed changes

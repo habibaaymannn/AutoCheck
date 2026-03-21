@@ -7,18 +7,14 @@ from error import (
     InvalidTrackedStateSpecError,
 
 )
+from provider.Provider import Provider
 from stateTracker.BaseTracker import BaseTracker
 from logger import setup_logger
 
 class HPCStateTracker(BaseTracker):
     def __init__(
-            self,
-            run_id:str,
-            method:str,
-            tracked_states:Sequence[HPCState],
-            scheduler: Optional[str] = None,
-            ):
-        super().__init__(run_id=run_id, method=method)
+            self, method: str, program_path: str, tracked_states:Sequence[HPCState], scheduler: Optional[str] = None, run_id: str = "default"):
+        super().__init__(method=method, program_path=program_path, run_id=run_id)
         self.logger = setup_logger(self.__class__.__name__, run_id)
         self.scheduler: Optional[str] = scheduler
         self.states: list[HPCState] = list(tracked_states)
@@ -28,10 +24,17 @@ class HPCStateTracker(BaseTracker):
         self.last_completed_unit: int=0
         self.scheduler_status: str='unknown'
         self.latest_checkpoint_path: Optional[str]=None
-
+        self._init_provider()
         self.validate()
         self.logger.info(f"HPCStateTracker initialized | run_id={run_id} | method={method}")
 
+
+    def _init_provider(self):
+        poll_list = [str(self.method), "iteration", "last_completed_unit"]
+        target_list = ["scheduler"]
+        temp = [x.name for x in self.states]
+        target_list.extend(temp)
+        self.provider = Provider(self.program_path, self.method, poll_list, target_list)
 
     def set_states(self, tracked_states: Sequence[HPCState]) -> None:
         with self.lock:
@@ -47,7 +50,7 @@ class HPCStateTracker(BaseTracker):
                 self.logger.error("Provider is not set in update_chpnt_method")
                 raise RuntimeError("Provider is not set.")
             try:
-                prov_state: Dict[str, Any] = self.provider.get_state()
+                prov_state: Dict[str, Any] = self.provider.fetch_ckpt()
             except Exception:
                 self.logger.exception("Failed to fetch provider state in update_chpnt_method")
                 raise
@@ -69,7 +72,7 @@ class HPCStateTracker(BaseTracker):
                 self.logger.error("Provider is not set in update_all_from_prov")
                 raise RuntimeError("Provider is not set.")
             try:
-                prov_state: Dict[str, Any] = self.provider.get_state()
+                prov_state: Dict[str, Any] = self.provider.fetch_all()
             except Exception:
                 self.logger.exception("Failed to fetch provider state in update_all_from_prov")
                 raise
@@ -97,6 +100,7 @@ class HPCStateTracker(BaseTracker):
 
 
     def snapshot(self) -> Dict[str, Any]:
+        self.update_all_from_prov()
         with self.lock:
             snap = {
                 "run_id": self.run_id,
@@ -123,7 +127,7 @@ class HPCStateTracker(BaseTracker):
             if not isinstance(state, dict):
                 self.logger.error("Invalid checkpoint payload type: %s", type(state).__name__)
                 raise RuntimeError("Checkpoint payload must be a dict")
-            
+            self.provider.restore(state)
             self.iteration = state.get("iteration", 0)
             self.last_completed_unit = state.get("last_completed_unit", 0)
             self.scheduler_status = state.get("scheduler_status", "unknown")
