@@ -40,7 +40,7 @@ class Provider:
     restore(snap) -- fans out layer.restore(snap) to every layer.
                      Called once on resume before the user script runs.
     """
-    def __init__(self,program_path: str, ckpt_method:str, poll:list[str], snapshot:list[str],  run_id: str = "default") -> None:
+    def __init__(self, program_path: str, ckpt_method:str, poll:list[str], snapshot:list[str],  run_id: str = "default") -> None:
         self._layers: List[BaseLayer] = []
         self.program_path = program_path
         self.ckpt_method = ckpt_method
@@ -69,6 +69,8 @@ class Provider:
                     raise ValueError(f"Couldn't find the checkpoint variable in the program")
                 else:
                     self.logger.info(f"[FETCH_CKPT] | Found the checkpoint variables in the program: {self.poll}")
+            else:
+                continue
         return result
 
     def fetch_all(self):

@@ -100,6 +100,7 @@ class HPCStateTracker(BaseTracker):
 
 
     def snapshot(self) -> Dict[str, Any]:
+        self.update_all_from_prov()
         with self.lock:
             snap = {
                 "run_id": self.run_id,
