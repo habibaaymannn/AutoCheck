@@ -28,9 +28,8 @@ from stateTracker.HPCStateTracker import HPCStateTracker
 from provider.Provider import Provider
 from logger import setup_logger
 
-# -----------------------------
 # Minimal stub controller
-# -----------------------------
+
 class AutonomousController:
     def __init__(self):
         self._config = None
@@ -47,16 +46,15 @@ class AutonomousController:
     def start(self):
         print("[STUB] start() — running user script normally")
 
-# -----------------------------
+
 # RunnerScript
-# -----------------------------
+
 class RunnerScript:
     def __init__(self):
         self.logger = setup_logger("RunnerScript", "runner")
 
-    # -------------------------
     # Public API
-    # -------------------------
+    
     def run(self, config_path, user_program, mode_override=None, save_dir_override=None,
             validate_only=False, model=None, optimizer=None, scheduler=None,
             global_step=None, epoch=None, batch_idx=None):
@@ -101,9 +99,9 @@ class RunnerScript:
 
         self._run_with_checkpoint(user_program, tracker, provider, checkpoint_dir, keep_last)
 
-    # -------------------------
+
     # Bootstrap / wiring
-    # -------------------------
+    
     def _bootstrap(self, config_path, user_program, mode_override, save_dir_override):
         if not os.path.isfile(user_program):
             print(f"[AutoCheck] Program not found: {user_program}")
@@ -147,9 +145,9 @@ class RunnerScript:
         self.logger.info(f"Controller wired | mode={cm.mode}")
         return controller
 
-    # -------------------------
+   
     # Checkpoint / Provider
-    # -------------------------
+
     def _setup_checkpoint(self, cm, user_program, model=None, optimizer=None, scheduler=None,
                           global_step=None, epoch=None, batch_idx=None):
 
@@ -202,9 +200,8 @@ class RunnerScript:
         for old in files[:-keep_last]:
             old.unlink()
 
-    # -------------------------
     # Run wrapper with Ctrl+C handling
-    # -------------------------
+
     def _run_with_checkpoint(self, user_program, tracker, provider, checkpoint_dir, keep_last):
         def handle_sigint(sig, frame):
             print("\n[AutoCheck] Ctrl+C caught — saving checkpoint...")
@@ -226,9 +223,8 @@ class RunnerScript:
             self._save_checkpoint(snapshot, checkpoint_dir, keep_last)
             self._print_state("AutoCheck saved due to exception", snapshot)
 
-    # -------------------------
     # State printing
-    # -------------------------
+    
     def _print_state(self, label, state: dict):
         print(f"\n[{label}]")
         for k, v in state.items():
@@ -239,9 +235,9 @@ class RunnerScript:
             else:
                 print(f"  {k:12} = {type(v).__name__}")
 
-    # -------------------------
+   
     # Process / PID helpers
-    # -------------------------
+   
     def _is_running(self, cm):
         pid_file = Path(cm.get(Checkpoint).save_dir) / ".autocheck.pid"
         if not pid_file.exists():

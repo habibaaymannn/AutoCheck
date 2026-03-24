@@ -26,4 +26,15 @@ data/
 
 # Optional: ignore Python cache
 __pycache__/
+*.pyc# Ignore logs
+logs/
+
+# Ignore checkpoints
+checkpoints/
+
+# Ignore raw dataset files
+data/
+
+# Optional: ignore Python cache
+__pycache__/
 *.pyc

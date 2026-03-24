@@ -147,7 +147,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 config_path      = args.config,
                 user_program     = args.user_program,
                 mode_override    = args.mode,
-                save_dir_override= args.save_dir,)
+             save_dir_override= args.save_dir,)
 
     except ConfigParseError as exc:
         print(f"\n[autocheck] config parse error:\n  {exc}\n", file=sys.stderr)
