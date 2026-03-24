@@ -1,0 +1,7 @@
+2026-03-24 20:59:00,731 | INFO | TraceLayer | [ATTACH] | TraceLayer active | target=C:\Users\Dell\OneDrive\Desktop\Auto--Check\AutoCheck\mlTrainingModel.py | watching scalars={'batch_idx', 'global_step', 'epoch'} | watching objects={'optimizer', 'model', 'amp', 'rng_state', 'scheduler'}
+2026-03-24 21:05:07,055 | INFO | TraceLayer | [ATTACH] | TraceLayer active | target=C:\Users\Dell\OneDrive\Desktop\Auto--Check\AutoCheck\mlTrainingModel.py | watching scalars={'batch_idx', 'epoch', 'global_step'} | watching objects={'scheduler', 'model', 'optimizer', 'rng_state', 'amp'}
+2026-03-24 21:06:18,437 | INFO | TraceLayer | [SNAPSHOT] | complete | scalars=[] | objects=[]
+2026-03-24 21:17:47,030 | INFO | TraceLayer | [ATTACH] | TraceLayer active | target=C:\Users\Dell\OneDrive\Desktop\Auto--Check\AutoCheck\mlTrainingModel.py | watching scalars={'global_step', 'epoch', 'batch_idx'} | watching objects={'amp', 'model', 'rng_state', 'scheduler', 'optimizer'}
+2026-03-24 21:22:45,544 | INFO | TraceLayer | [SNAPSHOT] | complete | scalars=[] | objects=[]
+2026-03-24 21:23:06,716 | INFO | TraceLayer | [ATTACH] | TraceLayer active | target=C:\Users\Dell\OneDrive\Desktop\Auto--Check\AutoCheck\mlTrainingModel.py | watching scalars={'batch_idx', 'epoch', 'global_step'} | watching objects={'model', 'scheduler', 'amp', 'rng_state', 'optimizer'}
+2026-03-24 21:25:23,580 | INFO | TraceLayer | [SNAPSHOT] | complete | scalars=[] | objects=[]
