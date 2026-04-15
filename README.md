@@ -211,11 +211,11 @@ AutoCheck/
 | Define idea & scope | Problem statement, feasibility, objectives | ✅ Completed |
 | Research | Literature review, DMTCP & ML framework analysis | ✅ Completed |
 | Documentation & presentation | Midyear report and slides | ✅ Completed |
-| Config Layer | YAML parser and config module | 🔄 Feb 21, 2026 |
-| State Tracker | Real-time job and training state monitoring | 🔄 Mar 1, 2026 |
-| Checkpoint Manager | Save, load, and recovery logic | 🔄 Mar 13, 2026 |
-| Autonomous Controller | Background orchestration and coordination | 🔄 Apr 18, 2026 |
-| Runner Script | Job launcher with checkpoint integration | 🔄 Apr 26, 2026 |
+| Config Layer | YAML parser and config module | ✅ Completed |
+| State Tracker | Real-time job and training state monitoring | ✅ Completed |
+| Runner Script | Job launcher with checkpoint integration | ✅ Completed |
+| Checkpoint Manager | Save, load, and recovery logic | 🔄 Mar 18, 2026 |
+| Autonomous Controller | Background orchestration and coordination | 🔄 Apr 26, 2026 |
 | Testing & packaging | End-to-end tests and final release | 🔄 May 1, 2026 |
 
 ---
