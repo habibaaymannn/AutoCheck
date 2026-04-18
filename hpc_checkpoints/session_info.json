@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "last_save_time": "2026-04-18T18:56:50+00:00",
-  "hostname": "TOQA",
-  "pid": 24552,
-  "checkpoint_manager": "GenericCheckpointManager",
-  "checkpoint_path": "hpc_checkpoints\\checkpoint_1776538610.json"
-}
