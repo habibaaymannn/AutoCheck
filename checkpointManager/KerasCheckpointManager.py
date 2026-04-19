@@ -1,14 +1,16 @@
 from __future__ import annotations
-import tensorflow as tf
+
 import hashlib
 import json
 import logging
 import os
-import shutil
-import tempfile
 import re
+import shutil
 from pathlib import Path
 from typing import Any, Dict, List
+
+import numpy as np
+
 from .CheckpointManager import CheckpointManager
 
 logger = logging.getLogger(__name__)
@@ -18,214 +20,197 @@ class KerasCheckpointManager(CheckpointManager):
     """
     Checkpoint manager for Keras / TensorFlow models.
 
-    Inherits session info load/save from CheckpointManager and
-    implements save_checkpoint / load_checkpoint using the native
-    Keras SavedModel format (.keras file) together with a companion
-    JSON file that carries all scalar metadata (epoch, step, ...).
-
-    Directory layout produced by save_checkpoint():
+    Directory layout:
         <save_dir>/
-            v{checkpoint_version}/
-                model.keras          <- full Keras model (weights + architecture + compile state)
-                optimizer/           <- tf.train.Checkpoint directory (weights + step)
-                metadata.json        <- every non-model key from the state dict + version + checksum
-                session_info.json    <- written by CheckpointManager.save_session_info()
+            v{n}/
+                model.keras             <- full Keras model (weights + architecture + compile state)
+                optimizer_state.npy     <- optimizer weights as numpy array (optional)
+                metadata.json           <- all scalar/dict state fields + checksum
+                session_info.json       <- written by CheckpointManager.save_session_info()
 
-    Each call to save_checkpoint() creates a new v{n+1}/ subdirectory,
-    preserving all previous versions.  load_checkpoint() always loads the
-    highest-numbered version found on disk.
-
-    Writes are atomic: everything goes to a temp dir first, then the
-    temp dir is swapped into place so a crash mid-save never leaves a
-    partial checkpoint.
-
-    Parameters
-    ----------
-    model_filename : str
-        Name of the Keras model file inside the versioned subdirectory.
-        Defaults to "model.keras".
+    Saves are atomic (temp dir → rename). Each call creates a new version;
+    load always picks the highest valid version (checksum-verified).
     """
-    MODEL_FILE = "model.keras"  # public class constant for external reference
-    OPT_DIR = "optimizer"
-    METADATA_FILE = "metadata.json"
+
+    MODEL_FILE     = "model.keras"
+    OPTIMIZER_FILE = "optimizer_state.npy"
+    METADATA_FILE  = "metadata.json"
+    VERSION_RE     = re.compile(r"^v(\d+)$")
 
     def __init__(self, model_filename: str = "model.keras") -> None:
+        super().__init__()
         self.model_filename = model_filename
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def save_checkpoint(self, state: Dict[str, Any], save_dir: str) -> str:
+        try:
+            import tensorflow as tf
+        except ImportError as exc:
+            raise ImportError(
+                "TensorFlow is required. Install with: pip install tensorflow"
+            ) from exc
+
         model = state.get("model")
         if model is None:
-            raise ValueError("Missing model")
-        version = self.next_version(save_dir)
+            raise ValueError("state must contain a 'model' key")
+        if not isinstance(model, tf.keras.Model):
+            raise TypeError(
+                f"'model' must be a tf.keras.Model, got {type(model).__name__}"
+            )
 
-        # final target for this version
-        final_version_dir = os.path.join(save_dir, f"v{version}")
+        version   = self._next_version(save_dir)
+        final_dir = os.path.join(save_dir, f"v{version}")
+        tmp_dir   = os.path.join(save_dir, f".tmp_v{version}")
 
-        # temp directory INSIDE save_dir (safe + atomic per version)
-        temp_version_dir = os.path.join(save_dir, f".tmp_v{version}")
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir)
+        os.makedirs(tmp_dir, exist_ok=True)
 
-        # clean temp if exists
-        if os.path.exists(temp_version_dir):
-            shutil.rmtree(temp_version_dir)
-
-        os.makedirs(temp_version_dir, exist_ok=True)
-        model_path = os.path.join(temp_version_dir, self.MODEL_FILE)
+        # 1. model
+        model_path = os.path.join(tmp_dir, self.model_filename)
         model.save(model_path)
+        logger.info("[KerasCheckpointManager] Model saved → %s", model_path)
 
-        # 2. optimizer
-        if state.get("optimizer") is not None:
-            opt_dir = os.path.join(temp_version_dir, self.OPT_DIR)
-            os.makedirs(opt_dir, exist_ok=True)
-
-            ckpt = tf.train.Checkpoint(optimizer=state["optimizer"])
-            ckpt.write(os.path.join(opt_dir, "ckpt"))
+        # 2. optimizer (optional)
+        optimizer = state.get("optimizer")
+        if optimizer is not None:
+            try:
+                opt_path = os.path.join(tmp_dir, self.OPTIMIZER_FILE)
+                np.save(opt_path, np.array(optimizer.get_weights(), dtype=object), allow_pickle=True)
+                logger.info("[KerasCheckpointManager] Optimizer saved → %s", opt_path)
+            except Exception as e:
+                logger.warning("[KerasCheckpointManager] Could not save optimizer weights: %s", e)
 
         # 3. metadata
-        metadata = self.sanitize_metadata(state)
+        metadata = self._sanitize_metadata(state)
         metadata.update({
             "checkpoint_version": version,
-            "model_filename": self.MODEL_FILE,
-            "model_checksum": self.file_checksum(model_path)
+            "model_filename":     self.model_filename,
+            "model_checksum":     self._file_checksum(model_path),
         })
-
-        with open(os.path.join(temp_version_dir, self.METADATA_FILE), "w") as f:
+        with open(os.path.join(tmp_dir, self.METADATA_FILE), "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
-        # 4. swap atomically
-        final_version_dir = os.path.join(save_dir, f"v{version}")
+        # 4. session info
+        self.save_session_info(tmp_dir)
 
-        # 4. atomic move into final version folder
-        if os.path.exists(final_version_dir):
-            shutil.rmtree(final_version_dir)
+        # 5. atomic swap
+        if os.path.exists(final_dir):
+            shutil.rmtree(final_dir)
+        os.rename(tmp_dir, final_dir)
 
-        os.rename(temp_version_dir, final_version_dir)
-
-        return final_version_dir
+        logger.info("[KerasCheckpointManager] Saved v%d → %s", version, final_dir)
+        return final_dir
 
     def load_checkpoint(self, save_dir: str) -> Dict[str, Any]:
-        latest = self.latest_version(save_dir)
-        if latest == 0:
-            raise FileNotFoundError("No checkpoints found")
+        try:
+            import tensorflow as tf
+        except ImportError as exc:
+            raise ImportError(
+                "TensorFlow is required. Install with: pip install tensorflow"
+            ) from exc
 
-        version = self.latest_valid_version(
-            save_dir,
-            validator=lambda v: self._valid(save_dir, v)
-        )
-
+        version = self._latest_valid_version(save_dir)
         if version == 0:
-            raise RuntimeError("No valid checkpoints")
+            raise FileNotFoundError("No valid checkpoints found in: " + save_dir)
 
         vdir = os.path.join(save_dir, f"v{version}")
 
         # metadata
-        with open(os.path.join(vdir, self.METADATA_FILE)) as f:
+        with open(os.path.join(vdir, self.METADATA_FILE), encoding="utf-8") as f:
             metadata = json.load(f)
 
         # model
-        model_path = os.path.join(vdir, metadata.get("model_filename", self.MODEL_FILE))
-        model = tf.keras.models.load_model(model_path)
+        model_path = os.path.join(vdir, metadata.get("model_filename", self.model_filename))
+        result = {
+            **metadata,
+            "model":              tf.keras.models.load_model(model_path),
+            "checkpoint_version": version,
+        }
+        logger.info("[KerasCheckpointManager] Model loaded ← %s", model_path)
 
-        result = dict(metadata)
-        result["model"] = model
-        result["checkpoint_version"] = version
+        # optimizer weights (optional)
+        opt_path = os.path.join(vdir, self.OPTIMIZER_FILE)
+        if os.path.exists(opt_path):
+            result["optimizer_weights"] = list(np.load(opt_path, allow_pickle=True))
+            logger.info("[KerasCheckpointManager] Optimizer loaded ← %s", opt_path)
+        else:
+            result["optimizer_weights"] = None
 
-        # optimizer path only (no closure!)
-        opt_path = os.path.join(vdir, self.OPT_DIR, "ckpt")
-        result["optimizer_ckpt_path"] = opt_path if os.path.exists(opt_path) else None
+        # session info
+        result["session_info"] = self.load_session_info(vdir)
 
+        logger.info("[KerasCheckpointManager] Loaded v%d ← %s", version, vdir)
         return result
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _valid(self, save_dir: str, version: int) -> bool:
-        vdir = os.path.join(save_dir, f"v{version}")
-        return (
-                os.path.exists(os.path.join(vdir, self.METADATA_FILE)) and
-                os.path.exists(os.path.join(vdir, self.MODEL_FILE))
-        )
+    def _is_valid(self, save_dir: str, version: int) -> bool:
+        vdir       = os.path.join(save_dir, f"v{version}")
+        meta_path  = os.path.join(vdir, self.METADATA_FILE)
+        model_path = os.path.join(vdir, self.model_filename)
 
-    def is_json_serializable(self, v: Any) -> bool:
+        if not (os.path.exists(meta_path) and os.path.exists(model_path)):
+            return False
+
         try:
-            json.dumps(v)
-            return True
+            with open(meta_path, encoding="utf-8") as f:
+                metadata = json.load(f)
+            expected = metadata.get("model_checksum")
+            return not expected or self._file_checksum(model_path) == expected
         except Exception:
             return False
 
-    def sanitize_metadata(self, state: dict) -> dict:
-        return {
-            k: v
-            for k, v in state.items()
-            if k not in {"model", "optimizer"} and self.is_json_serializable(v)
-        }
+    def _get_versions(self, base_dir: str) -> List[int]:
+        p = Path(base_dir)
+        if not p.exists():
+            return []
+        versions = []
+        for d in p.iterdir():
+            if d.is_dir():
+                m = self.VERSION_RE.match(d.name)
+                if m:
+                    versions.append(int(m.group(1)))
+        return sorted(versions)
 
+    def _next_version(self, base_dir: str) -> int:
+        versions = self._get_versions(base_dir)
+        return 1 if not versions else versions[-1] + 1
 
-    def file_checksum(self, path: str) -> str:
+    def _latest_valid_version(self, base_dir: str) -> int:
+        for v in reversed(self._get_versions(base_dir)):
+            if self._is_valid(base_dir, v):
+                return v
+        return 0
+
+    def _sanitize_metadata(self, state: dict) -> dict:
+        skip = {"model", "optimizer"}
+        result = {}
+        for k, v in state.items():
+            if k in skip:
+                continue
+            try:
+                json.dumps(v)
+                result[k] = v
+            except Exception:
+                pass
+        return result
+
+    @staticmethod
+    def _file_checksum(path: str) -> str:
         sha = hashlib.sha256()
-
         if os.path.isfile(path):
             with open(path, "rb") as f:
                 for chunk in iter(lambda: f.read(65536), b""):
                     sha.update(chunk)
-
         elif os.path.isdir(path):
             for root, _, files in os.walk(path):
-                for f in sorted(files):
-                    with open(os.path.join(root, f), "rb") as file:
-                        sha.update(file.read())
-
+                for name in sorted(files):
+                    with open(os.path.join(root, name), "rb") as f:
+                        sha.update(f.read())
         return sha.hexdigest()
-
-    VERSION_PATTERN = re.compile(r"v(\d+)")
-
-    def get_versions(self, base_dir: str) -> List[int]:
-        path = Path(base_dir)
-        if not path.exists():
-            return []
-
-        versions = []
-        for item in path.iterdir():
-            if item.is_dir():
-                match = self.VERSION_PATTERN.match(item.name)
-                if match:
-                    versions.append(int(match.group(1)))
-
-        return sorted(versions)
-
-    def next_version(self, base_dir: str) -> int:
-        versions = self.get_versions(base_dir)
-        return 1 if not versions else versions[-1] + 1
-
-    def latest_version(self, base_dir: str) -> int:
-        versions = self.get_versions(base_dir)
-        return versions[-1] if versions else 0
-
-    def latest_valid_version(self, base_dir: str, validator) -> int:
-        for v in reversed(self.get_versions(base_dir)):
-            if validator(v):
-                return v
-        return 0
-
-
-    def create_temp_dir(self, base_dir: str):
-        parent = os.path.dirname(os.path.abspath(base_dir)) or "."
-        os.makedirs(parent, exist_ok=True)
-        return tempfile.TemporaryDirectory(dir=parent, prefix=".tmp_ckpt_")
-
-    def atomic_replace(self, tmp_dir: str, target_dir: str):
-        tmp_path = Path(tmp_dir)
-        target_path = Path(target_dir)
-
-        backup = None
-
-        if target_path.exists():
-            backup = target_path.with_suffix(".bak")
-            if backup.exists():
-                shutil.rmtree(backup)
-            os.rename(target_path, backup)
-
-        os.rename(tmp_path, target_path)
-
-        if backup and backup.exists():
-            shutil.rmtree(backup)
