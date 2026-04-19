@@ -24,7 +24,7 @@ class MLStateTracker(BaseTracker):
 
     def _init_provider(self):
         poll_list = ["epoch", "global_step", "batch_idx"]
-        target_list = ["model", "optimizer", "scheduler", "rng_state", "amp"]
+        target_list = ["model_state", "optimizer_state", "scheduler_state", "rng_state", "amp"]
         self.provider = Provider(self.program_path, self.method, poll_list, target_list)
 
     def update_ckpt_method(self) -> None:

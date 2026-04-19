@@ -45,13 +45,13 @@ class Provider:
         self.program_path = program_path
         self.ckpt_method = ckpt_method
         self.poll = poll
-        self.snapshot = snapshot
+        self.snapshot_vars = snapshot
         self.run_id = run_id
         self.logger = setup_logger(self.__class__.__name__, run_id)
 
         # init trace layer & signal layer
-        trace_layer = TraceLayer(self.program_path, self.poll, self.snapshot, self.run_id)
-        signal_layer = SignalLayer(self.poll, self.snapshot)
+        trace_layer = TraceLayer(self.program_path, self.poll, self.snapshot_vars, self.run_id)
+        signal_layer = SignalLayer(self.poll, self.snapshot_vars)
         self._register_layer(trace_layer)
         self._register_layer(signal_layer)
 
@@ -82,7 +82,7 @@ class Provider:
                 for var in self.poll:
                     if var in filtered:
                         result[var] = filtered[var]
-                for var in self.snapshot:
+                for var in self.snapshot_vars:
                     if var in filtered:
                         result[var] = filtered[var]
             else:
