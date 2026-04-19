@@ -8,6 +8,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 import tensorflow as tf
 
+from checkpointManager.KerasCheckpointManager import KerasCheckpointManager
+
+ckpt_manager = KerasCheckpointManager()
+SAVE_DIR = "checkpoints"
+
 # ── Data ──────────────────────────────────────────────────────────────────────
 iris = load_iris()
 X, y = iris.data, iris.target.reshape(-1, 1)
@@ -30,13 +35,17 @@ model = tf.keras.Sequential([
     tf.keras.layers.Dense(3, activation="softmax"),
 ])
 
+optimizer = tf.keras.optimizers.Adam()
+
 model.compile(
-    optimizer="adam",
+    optimizer=optimizer,
     loss="categorical_crossentropy",
     metrics=["accuracy"],
 )
 
 model.summary()
+
+
 
 # ── Train ─────────────────────────────────────────────────────────────────────
 history = model.fit(
@@ -46,6 +55,19 @@ history = model.fit(
     validation_split=0.1,
     verbose=1,
 )
+
+
+state = {
+    "model": model,
+    "optimizer": optimizer,
+    "epoch": 50,
+    "scaler": scaler,
+    "encoder": encoder,
+}
+print(ckpt_manager.load_checkpoint(SAVE_DIR))
+
+ckpt_path = ckpt_manager.save_checkpoint(state, SAVE_DIR)
+print("Saved checkpoint at:", ckpt_path)
 
 # ── Evaluate ──────────────────────────────────────────────────────────────────
 loss, accuracy = model.evaluate(X_test, y_test, verbose=0)

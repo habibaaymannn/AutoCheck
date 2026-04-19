@@ -38,3 +38,6 @@ data/
 # Optional: ignore Python cache
 __pycache__/
 *.pyc
+
+model_tensorflow.py
+model_sklearn.py

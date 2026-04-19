@@ -1,36 +1,32 @@
 from __future__ import annotations
-
 import json
 import logging
 import os
 import shutil
 import tempfile
+import re
+from pathlib import Path
 from typing import Any, Dict
-
-import joblib
-
 from .CheckpointManager import CheckpointManager
 
 logger = logging.getLogger(__name__)
 
 
-# No module-level CHECKPOINT_VERSION — versions are derived from the filesystem.
-
-
-class SKLearnCheckpointManager(CheckpointManager):
+class KerasCheckpointManager(CheckpointManager):
     """
-    Checkpoint manager for scikit-learn estimators.
+    Checkpoint manager for Keras / TensorFlow models.
 
     Inherits session info load/save from CheckpointManager and
-    implements save_checkpoint / load_checkpoint using joblib for the
-    estimator (the standard sklearn recommendation) and JSON for all
-    scalar / dict metadata.
+    implements save_checkpoint / load_checkpoint using the native
+    Keras SavedModel format (.keras file) together with a companion
+    JSON file that carries all scalar metadata (epoch, step, ...).
 
     Directory layout produced by save_checkpoint():
         <save_dir>/
             v{checkpoint_version}/
-                estimator.joblib     <- serialised sklearn estimator
-                metadata.json        <- scalar training metadata + version + checksum
+                model.keras          <- full Keras model (weights + architecture + compile state)
+                optimizer/           <- tf.train.Checkpoint directory (weights + step)
+                metadata.json        <- every non-model key from the state dict + version + checksum
                 session_info.json    <- written by CheckpointManager.save_session_info()
 
     Each call to save_checkpoint() creates a new v{n+1}/ subdirectory,
@@ -43,50 +39,47 @@ class SKLearnCheckpointManager(CheckpointManager):
 
     Parameters
     ----------
-    estimator_filename : str
-        Name of the joblib file inside the versioned subdirectory.
-        Defaults to "estimator.joblib".
-    compress : int
-        joblib compression level (0 = none, 1-9 = zlib). Defaults to 3.
+    model_filename : str
+        Name of the Keras model file inside the versioned subdirectory.
+        Defaults to "model.keras".
     """
-
-    ESTIMATOR_FILE = "estimator.joblib"
+    MODEL_FILE = "model.keras"  # public class constant for external reference
+    OPTIMIZER_DIR = "optimizer"
     METADATA_FILE = "metadata.json"
 
-    def __init__(
-            self,
-            estimator_filename: str = "estimator.joblib",
-            compress: int = 3,
-    ) -> None:
-        self.estimator_filename = estimator_filename
-        self.compress = compress
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+    def __init__(self, model_filename: str = "model.keras") -> None:
+        self.model_filename = model_filename
 
     def save_checkpoint(self, state: Dict[str, Any], save_dir: str) -> str:
         """
-        Persist a full sklearn training snapshot to *save_dir* atomically.
+        Persist a full training snapshot to *save_dir* atomically.
 
-        Each call appends a new versioned subdirectory (v1/, v2/, …).
+        Each call appends a new versioned subdirectory (v1/, v2/, ...).
         The version number is derived from what already exists on disk:
             - save_dir is empty or missing  -> writes to v1/
             - highest existing version is n -> writes to v{n+1}/
 
         Expected keys in *state*
         ------------------------
-        estimator       : sklearn estimator  — any fitted sklearn-compatible object
-        iteration       : int  (optional) — e.g. current CV fold, warm_start epoch
-        last_completed_unit : int (optional)
-        params          : dict (optional) — hyper-parameters used
-        metrics         : dict (optional) — validation scores, etc.
-        ...any extra JSON-serialisable fields are stored in metadata.json
+        model          : tf.keras.Model  — the live Keras model object
+        optimizer      : (optional) tf.keras.optimizers.Optimizer
+        epoch          : int
+        global_step    : int  (optional)
+        batch_idx      : int  (optional)
+        ...any extra scalar / dict fields are stored in metadata.json
 
         Returns
         -------
         str  — absolute path to the versioned subdirectory that was written.
         """
+        try:
+            import tensorflow as tf
+        except ImportError as exc:
+            raise ImportError(
+                "TensorFlow is required for KerasCheckpointManager. "
+                "Install it with: pip install tensorflow"
+            ) from exc
+
         # ── Guard: save_dir must not already exist as a file ─────────
         if os.path.isfile(save_dir):
             raise ValueError(
@@ -94,84 +87,83 @@ class SKLearnCheckpointManager(CheckpointManager):
                 "Provide a directory path instead."
             )
 
-        # ── Validate estimator ────────────────────────────────────────
-        estimator = state.get("estimator")
-        if estimator is None:
-            raise KeyError(
-                "'estimator' key is missing from state — cannot save SKLearn checkpoint."
-            )
-        if not (hasattr(estimator, "get_params") and callable(estimator.get_params)):
+        # ── Validate model ────────────────────────────────────────────
+        model: tf.keras.Model = state.get("model")
+        if model is None:
+            raise KeyError("'model' key is missing from state — cannot save Keras checkpoint.")
+        if not isinstance(model, tf.keras.Model):
             raise TypeError(
-                f"'estimator' does not look like a sklearn estimator "
-                f"(no get_params()). Got: {type(estimator).__name__}."
+                f"'model' must be a tf.keras.Model instance, got {type(model).__name__}."
             )
 
         # ── Determine next version from what already exists on disk ───
-        next_version = self._resolve_next_version(save_dir)
-        logger.info("[SKLearnCKPT] Saving as version v%d -> %s", next_version, save_dir)
+        versions = self._scan_versions(save_dir)
+        next_version = (versions[-1] + 1) if versions else 1
+        logger.info("[KerasCKPT] Saving as version v%d -> %s", next_version, save_dir)
 
         # ── Write everything to a temp dir, then swap atomically ──────
-        parent_dir = os.path.dirname(os.path.abspath(save_dir)) or "."
+        parent_dir = os.path.abspath(save_dir)
         os.makedirs(parent_dir, exist_ok=True)
 
         with tempfile.TemporaryDirectory(dir=parent_dir, prefix=".tmp_ckpt_") as tmp_dir:
-
-            # Preserve any existing vN/ subdirs so older versions survive the swap
-            if os.path.isdir(save_dir):
-                for entry in os.scandir(save_dir):
-                    if entry.is_dir() and entry.name.startswith("v"):
-                        shutil.copytree(entry.path, os.path.join(tmp_dir, entry.name))
 
             # All new artefacts live under the next versioned subdirectory
             version_subdir = os.path.join(tmp_dir, f"v{next_version}")
             os.makedirs(version_subdir, exist_ok=True)
 
-            # 1. Save the estimator with joblib
-            estimator_path = os.path.join(version_subdir, self.estimator_filename)
-            joblib.dump(estimator, estimator_path, compress=self.compress)
-            logger.info("[SKLearnCKPT] Estimator saved -> %s", estimator_path)
+            # 1. Save the Keras model
+            model_path = os.path.join(version_subdir, self.model_filename)
+            model.save(model_path)
+            logger.info("[KerasCKPT] Model saved -> %s", model_path)
 
-            # 2. Build and save metadata (with version + estimator checksum)
-            skip_keys = {"estimator"}
-            metadata: Dict[str, Any] = {}
+            # 2. Save optimizer via tf.train.Checkpoint (version-stable)
+            optimizer = state.get("optimizer")
+            if optimizer is not None:
+                try:
+                    opt_dir = os.path.join(version_subdir, self.OPTIMIZER_DIR)
+                    os.makedirs(opt_dir, exist_ok=True)
 
-            for k, v in state.items():
-                if k in skip_keys:
-                    continue
-                if self._is_json_serialisable(v):
-                    metadata[k] = v
-                else:
-                    logger.warning(
-                        "[SKLearnCKPT] Skipping non-serialisable key '%s' (type=%s)",
-                        k, type(v).__name__,
-                    )
+                    # Save both model + optimizer together (IMPORTANT FIX)
+                    tf_ckpt = tf.train.Checkpoint(model=model, optimizer=optimizer)
+                    tf_ckpt.write(os.path.join(opt_dir, "ckpt"))
 
-            # Always persist class name, hyper-params, version, and checksum
-            metadata.setdefault("estimator_class", type(estimator).__name__)
-            try:
-                metadata.setdefault("estimator_params", estimator.get_params(deep=True))
-            except Exception as e:
-                logger.warning("[SKLearnCKPT] Could not read estimator params: %s", e)
+                    logger.info("[KerasCKPT] Model + Optimizer saved -> %s", opt_dir)
+                except Exception as e:
+                    logger.warning("[KerasCKPT] Could not save optimizer: %s", e)
 
-            metadata["checkpoint_version"] = next_version
-            metadata["estimator_filename"] = self.estimator_filename
-            metadata["estimator_checksum"] = self._file_checksum(estimator_path)
+            # 3. Build and save metadata (with version + model checksum)
+            skip_keys = {"model", "optimizer"}
+            metadata: Dict[str, Any] = {
+                k: v for k, v in state.items()
+                if k not in skip_keys and self._is_json_serializable(v)
+            }
+            # ensure filesystem flush safety
+            if hasattr(model, "save"):
+                pass  # no-op but keeps structure clear
+
+            opt_config = optimizer.get_config() if optimizer is not None else None
+            metadata.update({
+                "checkpoint_version": next_version,
+                "model_filename": self.model_filename,
+                "optimizer_config": opt_config,
+                "model_checksum": self._checksum(model_path),
+            })
 
             meta_path = os.path.join(version_subdir, self.METADATA_FILE)
-            with open(meta_path, "w", encoding="utf-8") as fh:
-                json.dump(metadata, fh, indent=2)
-            logger.info("[SKLearnCKPT] Metadata saved -> %s", meta_path)
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
+            logger.info("[KerasCKPT] Metadata saved -> %s", meta_path)
 
-            # 3. Session info
+            # 4. Session info
             self.save_session_info(version_subdir)
 
-            # 4. Atomic swap: replace save_dir with the fully prepared tmp dir
-            if os.path.isdir(save_dir):
-                shutil.rmtree(save_dir)
-            shutil.copytree(tmp_dir, save_dir)
+            # 5. Atomic swap (safe rename strategy)
+            final_version_dir = os.path.join(save_dir, f"v{next_version}")
 
-        logger.info("[SKLearnCKPT] Checkpoint complete -> %s", save_dir)
-        return os.path.abspath(os.path.join(save_dir, f"v{next_version}"))
+            #Atomic replace
+            os.replace(version_subdir, final_version_dir)
+        logger.info("[KerasCKPT] Checkpoint complete -> %s", save_dir)
+        return os.path.join(save_dir, f"v{next_version}")
 
     def load_checkpoint(self, save_dir: str) -> Dict[str, Any]:
         """
@@ -184,111 +176,115 @@ class SKLearnCheckpointManager(CheckpointManager):
         Returns
         -------
         dict with keys:
-            estimator        : sklearn estimator  (fully restored, ready to predict)
-            estimator_class  : str                (class name, for logging / assertions)
-            estimator_params : dict               (hyper-parameters used at save time)
+            model              : tf.keras.Model   (fully restored)
+            optimizer_ckpt_dir : str | None       (path to optimizer ckpt prefix —
+                                                   call tf.train.Checkpoint(optimizer=opt)
+                                                   .read(path) after the first training step)
             checkpoint_version : int              (the version that was loaded)
-            iteration, last_completed_unit, metrics, ... (all scalars from metadata.json)
-            session_info     : dict | None        (from session_info.json)
+            epoch, global_step, batch_idx, ...    (all scalars from metadata.json)
+            session_info       : dict | None      (from session_info.json)
         """
+        try:
+            import tensorflow as tf
+        except ImportError as exc:
+            raise ImportError(
+                "TensorFlow is required for KerasCheckpointManager. "
+                "Install it with: pip install tensorflow"
+            ) from exc
+
         if not os.path.isdir(save_dir):
             raise FileNotFoundError(f"Checkpoint directory not found: {save_dir}")
 
         # Auto-detect the latest versioned subdirectory (e.g. save_dir/v3/)
-        latest_version = self._resolve_latest_version(save_dir)
-        version_subdir = os.path.join(save_dir, f"v{latest_version}")
-        logger.info("[SKLearnCKPT] Loading latest checkpoint v%d <- %s", latest_version, save_dir)
+        versions = self._scan_versions(save_dir)
+        if not versions:
+            logger.error("[KerasCKPT] No previous checkpoints")
+            raise FileNotFoundError("No checkpoints found")
 
-        state: Dict[str, Any] = {}
+        latest_version = versions[-1]
 
-        # 1. Load metadata first (so we can read estimator_filename + checksum)
+        # iterate from newest → oldest once (no extra disk scans)
+        selected_version = None
+        for v in reversed(versions):
+            version_subdir = os.path.join(save_dir, f"v{v}")
+            if self._is_valid_checkpoint(version_subdir):
+                selected_version = v
+                break
+
+        if selected_version is None:
+            raise FileNotFoundError("No valid checkpoints found (all versions are corrupted).")
+
+        if selected_version != latest_version:
+            logger.warning(
+                "[KerasCKPT] Falling back from v%d to last valid v%d",latest_version, selected_version)
+
+        logger.info("[KerasCKPT] Loading checkpoint v%d (requested latest v%d)",selected_version, latest_version)
+
+        # 1. Load metadata first (so we can read model_filename + checksum)
+        version_subdir = os.path.join(save_dir, f"v{selected_version}")
+
         meta_path = os.path.join(version_subdir, self.METADATA_FILE)
-        if not os.path.exists(meta_path):
-            raise FileNotFoundError(
-                f"metadata.json not found in '{version_subdir}'. "
-                "The checkpoint may be corrupt."
-            )
         with open(meta_path, "r", encoding="utf-8") as fh:
             metadata = json.load(fh)
 
-        state.update(metadata)
-        logger.info("[SKLearnCKPT] Metadata loaded <- %s", meta_path)
-
-        # 2. Load and verify the estimator
-        estimator_filename = metadata.get("estimator_filename", self.estimator_filename)
-        estimator_path = os.path.join(version_subdir, estimator_filename)
-        if not os.path.exists(estimator_path):
-            raise FileNotFoundError(f"Estimator file not found: {estimator_path}")
-
-        saved_checksum = metadata.get("estimator_checksum")
-        if saved_checksum is not None:
-            actual_checksum = self._file_checksum(estimator_path)
-            if actual_checksum != saved_checksum:
+        # ── Validate checksum before loading model ───────────────────────
+        expected_checksum = metadata.get("model_checksum")
+        if expected_checksum is not None:
+            actual_checksum = self._checksum(
+                os.path.join(version_subdir, metadata.get("model_filename", self.model_filename))
+            )
+            if actual_checksum != expected_checksum:
                 raise ValueError(
-                    f"Estimator file checksum mismatch for '{estimator_path}'. "
-                    "The file may be corrupt."
+                    f"[KerasCKPT] Checksum mismatch for v{selected_version}. "
+                    "Checkpoint may be corrupted."
                 )
 
-        state["estimator"] = joblib.load(estimator_path)
-        logger.info("[SKLearnCKPT] Estimator loaded <- %s", estimator_path)
+        model_path = os.path.join(version_subdir, metadata.get("model_filename", self.model_filename))
+        model = tf.keras.models.load_model(model_path, compile=False)
 
-        # 3. Session info
+        state = dict(metadata)
+        state["model"] = model
+        logger.info("[KerasCKPT] Metadata loaded <- %s", meta_path)
+
+        opt_dir = os.path.join(version_subdir, self.OPTIMIZER_DIR)
+        ckpt_path = os.path.join(opt_dir, "ckpt")
+
+        if os.path.exists(opt_dir):
+            opt_config = metadata.get("optimizer_config")
+            if opt_config is not None:
+                optimizer = tf.keras.optimizers.Adam.from_config(opt_config)
+            else:
+                optimizer = tf.keras.optimizers.Adam()
+            ckpt = tf.train.Checkpoint(model=model, optimizer=optimizer)
+            status = ckpt.restore(ckpt_path)
+            status.assert_existing_objects_matched()
+            state["optimizer"] = optimizer
+        else:
+            state["optimizer"] = None
+
         state["session_info"] = self.load_session_info(version_subdir)
 
-        logger.info("[SKLearnCKPT] Checkpoint loaded <- %s", save_dir)
         return state
-
-    # _is_json_serialisable, _file_checksum, _resolve_next_version,
-    # and _resolve_latest_version are all inherited from CheckpointManager.
-
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    @staticmethod
-    def _resolve_next_version(save_dir: str) -> int:
+    def _scan_versions(self, save_dir: str) -> list[int]:
         """
-        Scan *save_dir* for existing v{n}/ subdirectories and return the
-        next version number to write.
-
-        - Directory is empty (or does not exist yet) → returns 1
-        - Highest existing version is n                → returns n + 1
+        Scan save_dir once and return sorted list of available versions.
         """
-        return CheckpointManager._latest_version(save_dir) + 1
+        path = Path(save_dir)
+        if not path.exists():
+            return []
+        versions = []
+        for p in path.iterdir():
+            if p.is_dir():
+                m = re.match(r"v(\d+)", p.name)
+                if m:
+                    versions.append(int(m.group(1)))
 
-    @staticmethod
-    def _resolve_latest_version(save_dir: str) -> int:
-        """
-        Scan *save_dir* for existing v{n}/ subdirectories and return the
-        highest version number found.
+        return sorted(versions)
 
-        Raises FileNotFoundError if no versioned subdirectory exists.
-        """
-        latest = CheckpointManager._latest_version(save_dir)
-        if latest == 0:
-            raise FileNotFoundError(
-                f"No versioned checkpoint subdirectory (v1, v2, …) found in '{save_dir}'."
-            )
-        return latest
-
-    @staticmethod
-    def _latest_version(save_dir: str) -> int:
-        """Return the highest v{n} version found in *save_dir*, or 0 if none."""
-        if not os.path.isdir(save_dir):
-            return 0
-        highest = 0
-        for entry in os.scandir(save_dir):
-            if entry.is_dir() and entry.name.startswith("v"):
-                try:
-                    n = int(entry.name[1:])
-                    if n > highest:
-                        highest = n
-                except ValueError:
-                    pass  # ignore directories like "valid", "viz", etc.
-        return highest
-
-    @staticmethod
-    def _is_json_serialisable(value: Any) -> bool:
+    def _is_json_serializable(self, value: Any) -> bool:
         """Return True if *value* can be written directly to JSON."""
         try:
             json.dumps(value)
@@ -296,16 +292,8 @@ class SKLearnCheckpointManager(CheckpointManager):
         except (TypeError, ValueError):
             return False
 
-    @staticmethod
-    def _file_checksum(path: str) -> str:
-        """
-        Return a SHA-256 hex digest for the file (or directory) at *path*.
-
-        For directories every file is hashed in sorted walk order so the
-        digest is stable across platforms.
-        """
+    def _checksum(self, path: str) -> str:
         import hashlib
-
         sha = hashlib.sha256()
         if os.path.isfile(path):
             with open(path, "rb") as fh:
@@ -321,3 +309,18 @@ class SKLearnCheckpointManager(CheckpointManager):
         else:
             raise FileNotFoundError(f"Cannot checksum — path not found: {path}")
         return sha.hexdigest()
+
+    def _is_valid_checkpoint(self, version_dir: str) -> bool:
+        meta = os.path.join(version_dir, self.METADATA_FILE)
+        model = os.path.join(version_dir, self.model_filename)
+
+        if not (os.path.exists(meta) and os.path.exists(model)):
+            return False
+        try:
+            with open(meta, "r", encoding="utf-8") as f:
+                json.load(f)
+        except Exception:
+            return False
+
+        return True
+
