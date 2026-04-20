@@ -107,7 +107,11 @@ class TraceLayer(BaseLayer):
             result: Dict[str, Any] = dict(self._captured)
             for name, obj in self._objects.items():
                 try:
-                    result[name] = copy.deepcopy(obj.state_dict())
+                    if hasattr(obj, "state_dict"):
+                        result[name] = copy.deepcopy(obj.state_dict())
+                    else:
+                        # Keras → store the object itself
+                        result[name] = obj
                     self.logger.debug(f"[SNAPSHOT] | serialized {name}")
                 except Exception as e:
                     self.logger.error(f"[SNAPSHOT] | failed to serialize {name} | reason={e}")
@@ -186,12 +190,9 @@ class TraceLayer(BaseLayer):
         for name, value in locals_.items():
             if name in self._watched_vars and isinstance(value, (int, float)):
                 found_scalars[name] = value
-            if (
-                    name in self._watched_objs
-                    and name not in self._objects
-                    and hasattr(value, "state_dict")
-                    and callable(getattr(value, "state_dict"))
-            ):
+            if (name in self._watched_objs and name not in self._objects
+                    and (hasattr(value, "state_dict") or  hasattr(value, "save"))
+                    and callable(getattr(value, "state_dict"))):
                 found_objects[name] = value
 
         if not found_scalars and not found_objects:
@@ -229,7 +230,9 @@ class TraceLayer(BaseLayer):
                     if name in self._pending_restore:
                         saved = self._pending_restore.pop(name)
                         try:
-                            obj.load_state_dict(saved)
+                            if hasattr(obj, "load_state_dict"):
+                                obj.load_state_dict(saved)
+                            # else: skip (Keras handled externally)
                             self.logger.info(f"[RESTORE] | load_state_dict applied | {name}")
                         except Exception as e:
                             self.logger.error(f"[RESTORE] | load_state_dict failed | name={name} | reason={e}")

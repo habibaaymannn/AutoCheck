@@ -1,7 +1,6 @@
 system:
   execution_mode: ml
-  fram_schd: pytorch
-  run_id: run1
+  fram_schd: keras
 
 ml_model:
   name: main_model
@@ -12,9 +11,4 @@ checkpoint:
   max_session_time: 900
   safety_buffer_seconds: 15
   keep_last: 3
-  save_dir: ./checkpoints
-
-notify:
-  email: user@test.com
-  on_failure: true
-  on_checkpoint: false
+  save_dir: checkpoints

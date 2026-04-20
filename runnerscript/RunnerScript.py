@@ -1,22 +1,26 @@
 # RunnerScript.py
 from __future__ import annotations
+
 import os
 import runpy
-import sys
 import signal
+import sys
 from pathlib import Path
-from typing import Optional
 
 import torch
+
+from checkpointManager.KerasCheckpointManager import KerasCheckpointManager
 
 # Cross-platform process checks
 try:
     import psutil
 except ImportError:
     import subprocess
+
     print("[AutoCheck] psutil not found — installing...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
     import psutil
+
     print("[AutoCheck] psutil installed successfully")
 
 from config.ConfigManager import ConfigManager, ConfigParseError, ConfigValidationError
@@ -25,8 +29,8 @@ from config.YamlOBJ.Checkpoint import Checkpoint
 from config.YamlOBJ.HPC import HPC
 from stateTracker.MLStateTracker import MLStateTracker
 from stateTracker.HPCStateTracker import HPCStateTracker
-from provider.Provider import Provider
 from logger import setup_logger
+
 
 # Minimal stub controller
 
@@ -53,14 +57,24 @@ class RunnerScript:
     def __init__(self):
         self.logger = setup_logger("RunnerScript", "runner")
 
-    # Public API
-    
-    def run(self, config_path, user_program, mode_override=None, save_dir_override=None,
-            validate_only=False, model=None, optimizer=None, scheduler=None,
-            global_step=None, epoch=None, batch_idx=None):
-
-        cm = self._bootstrap(config_path, user_program, mode_override, save_dir_override)
-        tracker, provider, checkpoint_dir, keep_last = self._setup_checkpoint(
+    def run(
+            self,
+            config_path,
+            user_program,
+            mode_override=None,
+            save_dir_override=None,
+            validate_only=False,
+            model=None,
+            optimizer=None,
+            scheduler=None,
+            global_step=None,
+            epoch=None,
+            batch_idx=None,
+    ):
+        cm, checkpoint_dir, keep_last = self._bootstrap(
+            config_path, user_program, mode_override, save_dir_override
+        )
+        tracker, provider, checkpoint_manager = self._setup_checkpoint(
             cm, user_program, model, optimizer, scheduler, global_step, epoch, batch_idx
         )
 
@@ -75,33 +89,61 @@ class RunnerScript:
         controller = self._build_controller(cm, tracker)
         controller.start()
 
-        self._run_with_checkpoint(user_program, tracker, provider, checkpoint_dir, keep_last)
+        # Auto-resume behavior: if a checkpoint already exists in this save
+        # directory, restore it before running the user program.
+        payload = self._load_checkpoint(checkpoint_dir, checkpoint_manager)
+        if payload:
+            provider.restore(payload)
+            self._print_state("Auto-resume checkpoint", payload)
+        else:
+            print("[AutoCheck] No checkpoint found - starting fresh")
 
-    def resume(self, config_path, user_program, mode_override=None, save_dir_override=None,
-               model=None, optimizer=None, scheduler=None,
-               global_step=None, epoch=None, batch_idx=None):
+        self._run_with_checkpoint(
+            user_program,
+            provider,
+            checkpoint_dir,
+            keep_last,
+            checkpoint_manager,
+        )
 
-        cm = self._bootstrap(config_path, user_program, mode_override, save_dir_override)
-        tracker, provider, checkpoint_dir, keep_last = self._setup_checkpoint(
+    def resume(
+            self,
+            config_path,
+            user_program,
+            mode_override=None,
+            save_dir_override=None,
+            model=None,
+            optimizer=None,
+            scheduler=None,
+            global_step=None,
+            epoch=None,
+            batch_idx=None,
+    ):
+        cm, checkpoint_dir, keep_last = self._bootstrap(
+            config_path, user_program, mode_override, save_dir_override
+        )
+        tracker, provider, checkpoint_manager = self._setup_checkpoint(
             cm, user_program, model, optimizer, scheduler, global_step, epoch, batch_idx
         )
 
         controller = self._build_controller(cm, tracker)
         controller.start()
 
-        # Load checkpoint if available
-        payload = self._load_checkpoint(checkpoint_dir)
+        payload = self._load_checkpoint(checkpoint_dir, checkpoint_manager)
         if payload:
             provider.restore(payload)
             self._print_state("Restoring checkpoint", payload)
         else:
-            print("[AutoCheck] No checkpoint found — starting fresh")
+            print("[AutoCheck] No checkpoint found - starting fresh")
 
-        self._run_with_checkpoint(user_program, tracker, provider, checkpoint_dir, keep_last)
+        self._run_with_checkpoint(
+            user_program,
+            provider,
+            checkpoint_dir,
+            keep_last,
+            checkpoint_manager,
+        )
 
-
-    # Bootstrap / wiring
-    
     def _bootstrap(self, config_path, user_program, mode_override, save_dir_override):
         if not os.path.isfile(user_program):
             print(f"[AutoCheck] Program not found: {user_program}")
@@ -135,8 +177,13 @@ class RunnerScript:
             print(f"[AutoCheck] Config validation error: {e}")
             sys.exit(1)
 
+        checkpoint_cfg = cm.get(Checkpoint)
+        checkpoint_dir = Path(checkpoint_cfg.save_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        keep_last = checkpoint_cfg.keep_last
+
         self.logger.info(f"Config loaded | mode={cm.mode}")
-        return cm
+        return cm, checkpoint_dir, keep_last
 
     def _build_controller(self, cm, tracker):
         controller = AutonomousController()
@@ -145,54 +192,87 @@ class RunnerScript:
         self.logger.info(f"Controller wired | mode={cm.mode}")
         return controller
 
-   
-    # Checkpoint / Provider
-
-    def _setup_checkpoint(self, cm, user_program, model=None, optimizer=None, scheduler=None,
-                          global_step=None, epoch=None, batch_idx=None):
-
+    def _setup_checkpoint(
+            self,
+            cm,
+            user_program,
+            model=None,
+            optimizer=None,
+            scheduler=None,
+            global_step=None,
+            epoch=None,
+            batch_idx=None,
+    ):
         system_cfg = cm.get(System)
         checkpoint_cfg = cm.get(Checkpoint)
-        checkpoint_dir = Path(checkpoint_cfg.save_dir)
-        checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        keep_last = checkpoint_cfg.keep_last
-
         abs_path = os.path.abspath(user_program)
         method = checkpoint_cfg.method
 
-        # Setup tracker
         if cm.mode == "ml":
             tracker = MLStateTracker(method=method, program_path=abs_path, run_id=system_cfg.run_id)
         elif cm.mode == "hpc":
             hpc_cfg = cm.get(HPC)
-            tracker = HPCStateTracker(method=method, program_path=abs_path,
-                                      tracked_states=hpc_cfg.tracked_states, scheduler=system_cfg.fram_schd,
-                                      run_id=system_cfg.run_id)
+            tracker = HPCStateTracker(
+                method=method,
+                program_path=abs_path,
+                tracked_states=hpc_cfg.tracked_states,
+                scheduler=system_cfg.fram_schd,
+                run_id=system_cfg.run_id,
+            )
         else:
             raise ValueError(f"Unsupported mode {cm.mode}")
 
-        # Provider handles polling / snapshotting
         provider = tracker.provider
         tracker.run_tracer()
 
-        return tracker, provider, checkpoint_dir, keep_last
+        checkpoint_manager = None
 
-    def _save_checkpoint(self, snapshot: dict, checkpoint_dir: Path, keep_last: int):
+        if cm.mode == "ml":
+            framework = str(system_cfg.fram_schd).lower()
+            if framework in ["keras","tf", "tensorflow"]:
+                checkpoint_manager = KerasCheckpointManager(
+                    checkpoint_dir=checkpoint_cfg.save_dir,
+                    max_to_keep=checkpoint_cfg.keep_last,
+                )
+        return tracker, provider, checkpoint_manager
+
+    def _save_checkpoint(self, snapshot: dict, checkpoint_dir: Path, keep_last: int, checkpoint_manager=None):
+        if checkpoint_manager is not None:
+            payload = dict(snapshot)
+            saved_path = checkpoint_manager.save_checkpoint(payload, str(checkpoint_dir))
+            checkpoint_manager.save_session_info(
+                str(checkpoint_dir),
+                checkpoint_path=saved_path,
+            )
+            path = Path(saved_path)
+            print(f"[Checkpoint] saved -> {path.name}")
+            return path
+
         step = snapshot.get("global_step", 0)
         path = checkpoint_dir / f"checkpoint_{step:08d}.pt"
         tmp = path.with_suffix(".tmp")
         torch.save(snapshot, tmp)
         os.replace(tmp, path)
         self._prune_checkpoints(checkpoint_dir, keep_last)
-        print(f"[Checkpoint] saved → {path.name}")
+        print(f"[Checkpoint] saved -> {path.name}")
         return path
 
-    def _load_checkpoint(self, checkpoint_dir: Path):
+    def _load_checkpoint(self, checkpoint_dir: Path, checkpoint_manager=None):
+        if checkpoint_manager is not None:
+            try:
+                payload = checkpoint_manager.load_checkpoint(str(checkpoint_dir))
+            except RuntimeError:
+                return None
+            latest = checkpoint_manager._get_latest_checkpoint(checkpoint_dir)
+            if latest:
+                print(f"[Checkpoint] loaded <- {Path(latest).name}")
+            return payload
+
         files = sorted(checkpoint_dir.glob("checkpoint_*.pt"))
         if not files:
             return None
         payload = torch.load(files[-1])
-        print(f"[Checkpoint] loaded ← {files[-1].name}")
+        print(f"[Checkpoint] loaded <- {files[-1].name}")
         return payload
 
     def _prune_checkpoints(self, checkpoint_dir: Path, keep_last: int):
@@ -200,13 +280,13 @@ class RunnerScript:
         for old in files[:-keep_last]:
             old.unlink()
 
-    # Run wrapper with Ctrl+C handling
+    def _run_with_checkpoint(self, user_program, provider, checkpoint_dir, keep_last, checkpoint_manager=None):
+        user_program_abs = os.path.abspath(user_program)
 
-    def _run_with_checkpoint(self, user_program, tracker, provider, checkpoint_dir, keep_last):
         def handle_sigint(sig, frame):
-            print("\n[AutoCheck] Ctrl+C caught — saving checkpoint...")
+            print("\n[AutoCheck] Ctrl+C caught - saving checkpoint...")
             snapshot = provider.fetch_all()
-            self._save_checkpoint(snapshot, checkpoint_dir, keep_last)
+            self._save_checkpoint(snapshot, checkpoint_dir, keep_last, checkpoint_manager)
             self._print_state("AutoCheck saved", snapshot)
             sys.exit(0)
 
@@ -214,17 +294,17 @@ class RunnerScript:
         signal.signal(signal.SIGINT, handle_sigint)
 
         try:
-            runpy.run_path(user_program, run_name="__main__")
+            runpy.run_path(user_program_abs, run_name="__main__")
             snapshot = provider.fetch_all()
-            self._save_checkpoint(snapshot, checkpoint_dir, keep_last)
+            self._save_checkpoint(snapshot, checkpoint_dir, keep_last, checkpoint_manager)
         except Exception as e:
             print(f"\n[AutoCheck] Exception: {e}")
             snapshot = provider.fetch_all()
-            self._save_checkpoint(snapshot, checkpoint_dir, keep_last)
+            self._save_checkpoint(snapshot, checkpoint_dir, keep_last, checkpoint_manager)
             self._print_state("AutoCheck saved due to exception", snapshot)
 
     # State printing
-    
+
     def _print_state(self, label, state: dict):
         print(f"\n[{label}]")
         for k, v in state.items():
@@ -235,9 +315,8 @@ class RunnerScript:
             else:
                 print(f"  {k:12} = {type(v).__name__}")
 
-   
     # Process / PID helpers
-   
+
     def _is_running(self, cm):
         pid_file = Path(cm.get(Checkpoint).save_dir) / ".autocheck.pid"
         if not pid_file.exists():

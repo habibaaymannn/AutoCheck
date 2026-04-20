@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -45,15 +45,14 @@ class KerasCheckpointManager(CheckpointManager):
     METADATA_FILE  = "metadata.json"
     VERSION_RE     = re.compile(r"^v(\d+)$")
 
-    def __init__(self, max_to_keep:int=1, model_filename: str = "model.keras") -> None:
-        super().__init__()
+    def __init__(self, checkpoint_dir: str, max_to_keep: Optional[int] = None) -> None:
+        self._dir = Path(checkpoint_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
         self.max_to_keep = max_to_keep
-        self.model_filename = model_filename
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-
     def save_checkpoint(self, state: Dict[str, Any], save_dir: str) -> str:
         tf = self._import_tf()
         model = self._validate_model(state, tf)
@@ -62,10 +61,11 @@ class KerasCheckpointManager(CheckpointManager):
         tmp_dir, final_dir = self._version_dirs(save_dir, version)
         self._prepare_temp_dir(tmp_dir)
 
-        model_path = self._save_model(model, tmp_dir)
-        self._save_optimizer(state.get("optimizer"), tmp_dir, tf)
+        model_path = os.path.join(tmp_dir, self.MODEL_FILE)
+        model.save(model_path)
+
         self._save_metadata(state, model_path, version, tmp_dir)
-        self.save_session_info(tmp_dir)
+        self.save_session_info(save_dir, checkpoint_path=final_dir)
         self._atomic_swap(tmp_dir, final_dir)
 
         if self.max_to_keep is not None:
@@ -75,58 +75,27 @@ class KerasCheckpointManager(CheckpointManager):
         return final_dir
 
     def load_checkpoint(self, save_dir: str) -> Dict[str, Any]:
-        """
-               Recover the most recent valid checkpoint from *save_dir*.
-
-               Returns
-               -------
-               dict
-                   Keys: all metadata fields, ``"model"`` (tf.keras.Model),
-                   ``"optimizer_weights"`` (list of numpy arrays or ``None``),
-                   ``"optimizer_config"`` (dict or ``None``),
-                   ``"session_info"`` (dict or ``None``),
-                   ``"checkpoint_version"`` (int).
-
-               Notes
-               -----
-               To fully restore an optimizer, call::
-
-                   optimizer = tf.keras.optimizers.deserialize(result["optimizer_config"])
-                   optimizer.build(model.trainable_variables)
-                   optimizer.set_weights(result["optimizer_weights"])
-               """
         tf = self._import_tf()
         version = self._latest_valid_version(save_dir)
-        if version ==0:
+        if version == 0:
             raise FileNotFoundError("No valid checkpoints found in: " + save_dir)
 
         vdir = os.path.join(save_dir, f"v{version}")
-
         metadata = self._load_metadata(vdir)
-        model = self._load_model(vdir, metadata, tf)
-        opt_state = self._load_optimizer(vdir)
-        session = self.load_session_info(vdir)
+        model_path = os.path.join(vdir, self.MODEL_FILE)
+
+        model = tf.keras.models.load_model(model_path)
+        session = self.load_session_info(save_dir)
         result = {
             **metadata,
             "model": model,
-            "optimizer": self._restore_optimizer(model, opt_state),  # ← add this
-            "optimizer_weights": opt_state.get("weights"),
-            "optimizer_config": opt_state.get("config"),
+            "optimizer": model.optimizer,
             "session_info": session,
             "checkpoint_version": version,
         }
 
         logger.info("[KerasCheckpointManager] Loaded v%d ← %s", version, vdir)
         return result
-
-    def _restore_optimizer(self, model: Any, opt_state: Dict) -> Any:
-        if not opt_state.get("config") or not opt_state.get("weights"):
-            return None
-        tf = self._import_tf()
-        opt = tf.keras.optimizers.deserialize(opt_state["config"])
-        opt.build(model.trainable_variables)
-        opt.set_weights(opt_state["weights"])
-        return opt
 
     # ------------------------------------------------------------------
     # Save helpers  (each does exactly one job)
@@ -148,106 +117,17 @@ class KerasCheckpointManager(CheckpointManager):
             raise TypeError(f"'model' must be a tf.keras.Model, got {type(model).__name__}")
         return model
 
-
-
-    def _save_model(self, model:Any, tmp_dir:str) -> str:
-        model_path = os.path.join(tmp_dir, self.model_filename)
-        model.save(model_path)
-        logger.info("[KerasCheckpointManager] Model  saved -> %s", model_path)
-        return model_path
-
-    def _save_optimizer(self, optimizer: Any, tmp_dir: str, tf: Any) -> None:
-        """
-        Save optimizer config + weights together into a single .npz file.
-
-        Why config + weights together?
-        --------------------------------
-        ``optimizer.get_weights()`` returns the *numerical* slot values
-        (momentum, variance, …).  Without the config (learning-rate,
-        beta_1, …) a loader cannot reconstruct the optimizer correctly.
-        Storing both in one file keeps them in sync and makes the load
-        side unambiguous.
-
-        Edge-case: get_weights() returns [] when the optimizer has never
-        been applied (no train step has run yet).  We still save the
-        config so the loader can at least reconstruct the optimizer type
-        and hyper-parameters.
-        """
-        if optimizer is None:
-            return
-        if not isinstance(optimizer, tf.keras.optimizers.Optimizer):
-            logger.warning("[KerasCheckpointManager] Optimizer not a tf.keras.optimizer - skipped")
-            return
-        try :
-            config = optimizer.get_config()
-            # Handle older TF versions without get_weights()
-            if hasattr(optimizer, 'get_weights'):
-                weights = optimizer.get_weights()
-            else:
-                # Fallback: try to get slot variables
-                weights = []
-                if hasattr(optimizer, 'variables'):
-                    weights = optimizer.variables()
-                logger.warning("[KerasCheckpointManager] Using fallback for optimizer weights")
-            opt_path = os.path.join(tmp_dir, self.OPTIMIZER_FILE)
-            np.savez(opt_path, config=np.array(json.dumps(config), dtype=object),
-                weights=np.array(weights, dtype=object),)
-            logger.info("[KerasCheckpointManager] Optimizer saved → %s  (weights=%d arrays)",opt_path, len(weights),)
-
-        except Exception as e:
-            logger.warning("[KerasCheckpointManager] Could not save optimizer weights: %s", e)
-
-
-    # Load helpers  (each does exactly one job)
-
-    def _load_model(self, vdir: str, metadata: Dict[str, Any], tf: Any) -> Any:
-        filename = metadata.get("model_filename", self.model_filename)
-        model_path = os.path.join(vdir, filename)
-        model = tf.keras.models.load_model(model_path)
-        logger.info("[KerasCheckpointManager] Model loaded ← %s", model_path)
-        return model
-
-    def _load_optimizer(self, vdir: str) -> Dict[str, Any]:
-        """
-                Returns ``{"config": dict, "weights": list}`` or ``{}`` if no
-                optimizer file exists.
-
-                The caller is responsible for calling::
-
-                    opt = tf.keras.optimizers.deserialize(result["optimizer_config"])
-                    opt.build(model.trainable_variables)
-                    opt.set_weights(result["optimizer_weights"])
-
-                We do *not* call set_weights here because this manager does not
-                hold a reference to the live optimizer object.
-                """
-        opt_path = os.path.join(vdir, self.OPTIMIZER_FILE)
-        if not os.path.exists(opt_path):
-            return {}
-        try:
-            data = np.load(opt_path, allow_pickle=True)
-            config = json.loads(str(data["config"]))
-            weights = list(data["weights"])
-            logger.info("[KerasCheckpointManager] Optimizer loaded ← %s  (weights=%d arrays)",opt_path, len(weights),)
-            return {"config": config, "weights": weights}
-        except Exception as e:
-            logger.warning("[KerasCheckpointManager] Could not load optimizer weights: %s", e)
-            return {}
-
-
 # REPEATED Functions !!
-
     def _load_metadata(self, vdir: str) -> Dict[str, Any]:
         path = os.path.join(vdir, self.METADATA_FILE)
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-
     def _save_metadata(self, state: Dict[str, Any], model_path: str, version: int, tmp_dir: str,) -> None:
         metadata = self._sanitize_metadata(state)
         metadata.update({
             "checkpoint_version": version,
-            "model_filename": self.model_filename,
+            "model_filename": self.MODEL_FILE,
             "model_checksum": self._file_checksum(model_path),
         })
         path = os.path.join(tmp_dir, self.METADATA_FILE)
@@ -300,7 +180,7 @@ class KerasCheckpointManager(CheckpointManager):
     def _is_valid(self, save_dir: str, version: int) -> bool:
         vdir = os.path.join(save_dir, f"v{version}")
         meta_path = os.path.join(vdir, self.METADATA_FILE)
-        model_path = os.path.join(vdir, self.model_filename)
+        model_path = os.path.join(vdir, self.MODEL_FILE)
 
         if not (os.path.exists(meta_path) and os.path.exists(model_path)):
             return False

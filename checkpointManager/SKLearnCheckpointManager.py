@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import joblib
 
@@ -17,46 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 class SKLearnCheckpointManager(CheckpointManager):
-    """
-    Checkpoint manager for scikit-learn estimators / pipelines.
-
-    Designed for long-running jobs (GridSearchCV, incremental learning,
-    cross-validation, etc.) — saves everything needed to resume.
-
-    Directory layout:
-        <save_dir>/
-            v{n}/
-                model.joblib         <- fitted sklearn estimator / pipeline
-                metadata.json        <- epoch, step, cv_results, params, checksum, ...
-                session_info.json    <- written by CheckpointManager.save_session_info()
-
-    Saves are atomic (temp dir → rename). Each call creates a new version;
-    load always picks the highest valid version (checksum-verified).
-
-    State dict keys
-    ---------------
-    Required:
-        model       : fitted sklearn estimator or pipeline
-
-    Optional (all serializable values are saved automatically):
-        step            : int   – current iteration / fold index
-        epoch           : int   – epoch counter
-        cv_results      : dict  – partial CV results so far
-        best_params     : dict  – best params found so far
-        best_score      : float – best score so far
-        n_samples_seen  : int   – for incremental / partial_fit jobs
-        classes         : list  – for incremental classifiers
-        ... any other JSON-serializable key is saved as-is
-    """
-
     MODEL_FILE    = "model.joblib"
     METADATA_FILE = "metadata.json"
     VERSION_RE    = re.compile(r"^v(\d+)$")
 
-    def __init__(self,max_to_keep:int=None, model_filename: str = "model.joblib") -> None:
-        super().__init__()
+    def __init__(self, checkpoint_dir: str, max_to_keep: Optional[int] = None):
+        self._dir = Path(checkpoint_dir)
+        self._dir.mkdir(parents=True, exist_ok=True)
         self.max_to_keep = max_to_keep
-        self.model_filename = model_filename
 
     # ------------------------------------------------------------------
     # Public API
@@ -86,7 +54,7 @@ class SKLearnCheckpointManager(CheckpointManager):
         self._prepare_temp_dir(tmp_dir)
         model_path = self._save_model(model, tmp_dir)
         self._save_metadata(state, model_path, version, tmp_dir)
-        self.save_session_info(tmp_dir)
+        self.save_session_info(save_dir, checkpoint_path=final_dir)
         self._atomic_swap(tmp_dir, final_dir)
 
         if self.max_to_keep is not None:
@@ -119,8 +87,7 @@ class SKLearnCheckpointManager(CheckpointManager):
 
         metadata = self._load_metadata(vdir)
         model    = self._load_model(vdir, metadata)
-        session  = self.load_session_info(vdir)
-
+        session  =self.load_session_info(save_dir)
         result = {
             **metadata,
             "model":              model,
@@ -134,7 +101,7 @@ class SKLearnCheckpointManager(CheckpointManager):
     # Save helpers  (each does exactly one job)
     # ------------------------------------------------------------------
     def _save_model(self, model: Any, tmp_dir: str) -> str:
-        model_path = os.path.join(tmp_dir, self.model_filename)
+        model_path = os.path.join(tmp_dir, self.MODEL_FILE)
         joblib.dump(model, model_path, compress=3)
         logger.info("[SKLearnCheckpointManager] Model saved → %s", model_path)
         return model_path
@@ -150,7 +117,7 @@ class SKLearnCheckpointManager(CheckpointManager):
         return model
 
     def _load_model(self, vdir: str, metadata: Dict[str, Any]) -> Any:
-        filename = metadata.get("model_filename", self.model_filename)
+        filename = metadata.get("model_filename", self.MODEL_FILE)
         model_path = os.path.join(vdir, filename)
         model = joblib.load(model_path)
         logger.info("[SKLearnCheckpointManager] Model loaded ← %s", model_path)
@@ -167,7 +134,7 @@ class SKLearnCheckpointManager(CheckpointManager):
         metadata = self._sanitize_metadata(state)
         metadata.update({
             "checkpoint_version": version,
-            "model_filename": self.model_filename,
+            "model_filename": self.MODEL_FILE,
             "model_checksum": self._file_checksum(model_path),
         })
         path = os.path.join(tmp_dir, self.METADATA_FILE)
@@ -220,7 +187,7 @@ class SKLearnCheckpointManager(CheckpointManager):
     def _is_valid(self, save_dir: str, version: int) -> bool:
         vdir = os.path.join(save_dir, f"v{version}")
         meta_path = os.path.join(vdir, self.METADATA_FILE)
-        model_path = os.path.join(vdir, self.model_filename)
+        model_path = os.path.join(vdir, self.MODEL_FILE)
 
         if not (os.path.exists(meta_path) and os.path.exists(model_path)):
             return False

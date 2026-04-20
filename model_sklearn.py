@@ -9,11 +9,9 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, confusion_matrix
-
 from checkpointManager.SKLearnCheckpointManager import SKLearnCheckpointManager
 
-ckpt = SKLearnCheckpointManager(max_to_keep=5)
-
+ckpt=SKLearnCheckpointManager("checkpoints", 3 )
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 iris = load_iris()
@@ -35,17 +33,13 @@ model = RandomForestClassifier(
 
 # ── Train ─────────────────────────────────────────────────────────────────────
 model.fit(X_train, y_train)
+ckpt.save_checkpoint({"model":model,"scaler":scaler,"X_train":X_train,"y_train":y_train,"X_test":X_test,"y_test":y_test }, "checkpoints")
+
+print(ckpt.load_checkpoint("checkpoints"))
 
 # ── Cross-validation ──────────────────────────────────────────────────────────
 cv_scores = cross_val_score(model, X, y, cv=5)
 print(f"Cross-validation accuracy: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
-
-# ── Save checkpoint ───────────────────────────────────────────────────────────
-ckpt.save_checkpoint({"model": model, "step": 10}, "checkpoints/")
-
-# ── Load checkpoint & resume ──────────────────────────────────────────────────
-state = ckpt.load_checkpoint("checkpoints/")
-print(state)
 
 # ── Evaluate (using restored model) ───────────────────────────────────────────
 y_pred   = model.predict(X_test)

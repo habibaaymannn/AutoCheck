@@ -1,4 +1,4 @@
-from provider import Provider
+from provider.Provider import Provider
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any
 from threading import RLock
