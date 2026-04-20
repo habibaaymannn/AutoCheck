@@ -109,6 +109,7 @@ class KerasCheckpointManager(CheckpointManager):
         result = {
             **metadata,
             "model": model,
+            "optimizer": self._restore_optimizer(model, opt_state),  # ← add this
             "optimizer_weights": opt_state.get("weights"),
             "optimizer_config": opt_state.get("config"),
             "session_info": session,
@@ -118,6 +119,14 @@ class KerasCheckpointManager(CheckpointManager):
         logger.info("[KerasCheckpointManager] Loaded v%d ← %s", version, vdir)
         return result
 
+    def _restore_optimizer(self, model: Any, opt_state: Dict) -> Any:
+        if not opt_state.get("config") or not opt_state.get("weights"):
+            return None
+        tf = self._import_tf()
+        opt = tf.keras.optimizers.deserialize(opt_state["config"])
+        opt.build(model.trainable_variables)
+        opt.set_weights(opt_state["weights"])
+        return opt
 
     # ------------------------------------------------------------------
     # Save helpers  (each does exactly one job)
