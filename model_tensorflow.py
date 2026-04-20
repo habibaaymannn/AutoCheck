@@ -64,7 +64,7 @@ state = {
     "scaler": scaler,
     "encoder": encoder,
 }
-print(ckpt_manager.load_checkpoint(SAVE_DIR))
+#print(ckpt_manager.load_checkpoint(SAVE_DIR))
 
 ckpt_path = ckpt_manager.save_checkpoint(state, SAVE_DIR)
 print("Saved checkpoint at:", ckpt_path)

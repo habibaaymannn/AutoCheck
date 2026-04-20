@@ -180,7 +180,15 @@ class KerasCheckpointManager(CheckpointManager):
             return
         try :
             config = optimizer.get_config()
-            weights = optimizer.get_weights()
+            # Handle older TF versions without get_weights()
+            if hasattr(optimizer, 'get_weights'):
+                weights = optimizer.get_weights()
+            else:
+                # Fallback: try to get slot variables
+                weights = []
+                if hasattr(optimizer, 'variables'):
+                    weights = optimizer.variables()
+                logger.warning("[KerasCheckpointManager] Using fallback for optimizer weights")
             opt_path = os.path.join(tmp_dir, self.OPTIMIZER_FILE)
             np.savez(opt_path, config=np.array(json.dumps(config), dtype=object),
                 weights=np.array(weights, dtype=object),)

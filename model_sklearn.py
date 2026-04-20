@@ -12,8 +12,8 @@ from sklearn.metrics import classification_report, confusion_matrix
 
 from checkpointManager.SKLearnCheckpointManager import SKLearnCheckpointManager
 
-ckpt_manager = SKLearnCheckpointManager()
-SAVE_DIR = "checkpoints"
+ckpt = SKLearnCheckpointManager(max_to_keep=5)
+
 
 # ── Data ──────────────────────────────────────────────────────────────────────
 iris = load_iris()
@@ -41,24 +41,10 @@ cv_scores = cross_val_score(model, X, y, cv=5)
 print(f"Cross-validation accuracy: {cv_scores.mean():.4f} ± {cv_scores.std():.4f}")
 
 # ── Save checkpoint ───────────────────────────────────────────────────────────
-ckpt_path = ckpt_manager.save_checkpoint({
-    "model":      model,
-    "scaler":     scaler,          # not serialized to joblib — saved via metadata? no.
-    "step":       1,
-    "cv_mean":    float(cv_scores.mean()),
-    "cv_std":     float(cv_scores.std()),
-    "n_estimators": model.n_estimators,
-    "max_depth":    model.max_depth,
-}, SAVE_DIR)
-print(f"\nCheckpoint saved → {ckpt_path}")
+ckpt.save_checkpoint({"model": model, "step": 10}, "checkpoints/")
 
 # ── Load checkpoint & resume ──────────────────────────────────────────────────
-state = ckpt_manager.load_checkpoint(SAVE_DIR)
-model = state["model"]          # fully restored RandomForestClassifier
-print(f"Checkpoint loaded  (v{state['checkpoint_version']},"
-      f" saved at: {state['session_info']['last_save_time']})")
-print(f"  CV mean from checkpoint : {state['cv_mean']:.4f}")
-
+state = ckpt.load_checkpoint("checkpoints/")
 print(state)
 
 # ── Evaluate (using restored model) ───────────────────────────────────────────
