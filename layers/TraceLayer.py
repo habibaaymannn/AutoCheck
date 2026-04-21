@@ -206,7 +206,7 @@ class TraceLayer(BaseLayer):
                     frame.f_locals[name] = saved
                     found_scalars[name] = saved
                     needs_sync = True
-                    self.logger.info(f"[RESTORE] | frame writeback | {name} → {saved}")
+                    self.logger.info(f"[RESTORE] | frame writeback | {name} -> {saved}")
 
         if needs_sync:
             ctypes.pythonapi.PyFrame_LocalsToFast(
