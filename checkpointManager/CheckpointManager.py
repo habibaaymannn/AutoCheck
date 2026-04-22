@@ -45,7 +45,7 @@ class CheckpointManager(abc.ABC):
                 json.dump(session_data, fh, indent=2)
             os.replace(tmp_path, path)  # atomic on POSIX and Windows
 
-            logger.info("[CheckpointManager] Session info saved → %s", path)
+            logger.info("[CheckpointManager] Session info saved -> %s", path)
 
         except Exception as e:
             # Clean up the temp file if it was created
@@ -87,7 +87,7 @@ class CheckpointManager(abc.ABC):
         file_version = data.get("version")
         if file_version is None:
             logger.warning(
-                "[CheckpointManager] Session info in %s has no version field — "
+                "[CheckpointManager] Session info in %s has no version field - "
                 "likely written by an older build. Proceeding with caution.",
                 path,
             )
@@ -98,5 +98,5 @@ class CheckpointManager(abc.ABC):
                 path, SESSION_SCHEMA_VERSION, file_version,
             )
 
-        logger.info("[CheckpointManager] Session info loaded ← %s", path)
+        logger.info("[CheckpointManager] Session info loaded <- %s", path)
         return data

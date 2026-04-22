@@ -1,4 +1,3 @@
-# RunnerScript.py
 from __future__ import annotations
 
 import os
@@ -11,13 +10,12 @@ import torch
 
 from checkpointManager.KerasCheckpointManager import KerasCheckpointManager
 
-# Cross-platform process checks
 try:
     import psutil
 except ImportError:
     import subprocess
 
-    print("[AutoCheck] psutil not found — installing...")
+    print("[AutoCheck] psutil not found - installing...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "psutil"])
     import psutil
 
@@ -31,8 +29,6 @@ from stateTracker.MLStateTracker import MLStateTracker
 from stateTracker.HPCStateTracker import HPCStateTracker
 from logger import setup_logger
 
-
-# Minimal stub controller
 
 class AutonomousController:
     def __init__(self):
@@ -48,34 +44,32 @@ class AutonomousController:
         print(f"[STUB] set_state_tracker | mode={mode} | tracker={type(tracker).__name__}")
 
     def start(self):
-        print("[STUB] start() — running user script normally")
+        print("[STUB] start() - running user script normally")
 
-
-# RunnerScript
 
 class RunnerScript:
     def __init__(self):
         self.logger = setup_logger("RunnerScript", "runner")
 
     def run(
-            self,
-            config_path,
-            user_program,
-            mode_override=None,
-            save_dir_override=None,
-            validate_only=False,
-            model=None,
-            optimizer=None,
-            scheduler=None,
-            global_step=None,
-            epoch=None,
-            batch_idx=None,
+        self,
+        config_path,
+        user_program,
+        mode_override=None,
+        save_dir_override=None,
+        validate_only=False,
+        model=None,
+        optimizer=None,
+        scheduler=None,
+        global_step=None,
+        epoch=None,
+        batch_idx=None,
     ):
         cm, checkpoint_dir, keep_last = self._bootstrap(
             config_path, user_program, mode_override, save_dir_override
         )
         tracker, provider, checkpoint_manager = self._setup_checkpoint(
-            cm, user_program, model, optimizer, scheduler, global_step, epoch, batch_idx
+            cm, user_program
         )
 
         if validate_only:
@@ -89,8 +83,6 @@ class RunnerScript:
         controller = self._build_controller(cm, tracker)
         controller.start()
 
-        # Auto-resume behavior: if a checkpoint already exists in this save
-        # directory, restore it before running the user program.
         payload = self._load_checkpoint(checkpoint_dir, checkpoint_manager)
         if payload:
             provider.restore(payload)
@@ -123,7 +115,7 @@ class RunnerScript:
             config_path, user_program, mode_override, save_dir_override
         )
         tracker, provider, checkpoint_manager = self._setup_checkpoint(
-            cm, user_program, model, optimizer, scheduler, global_step, epoch, batch_idx
+            cm, user_program
         )
 
         controller = self._build_controller(cm, tracker)
@@ -196,12 +188,6 @@ class RunnerScript:
             self,
             cm,
             user_program,
-            model=None,
-            optimizer=None,
-            scheduler=None,
-            global_step=None,
-            epoch=None,
-            batch_idx=None,
     ):
         system_cfg = cm.get(System)
         checkpoint_cfg = cm.get(Checkpoint)
@@ -229,7 +215,7 @@ class RunnerScript:
 
         if cm.mode == "ml":
             framework = str(system_cfg.fram_schd).lower()
-            if framework in ["keras","tf", "tensorflow"]:
+            if framework in ["keras", "tf", "tensorflow"]:
                 checkpoint_manager = KerasCheckpointManager(
                     checkpoint_dir=checkpoint_cfg.save_dir,
                     max_to_keep=checkpoint_cfg.keep_last,
@@ -261,11 +247,13 @@ class RunnerScript:
         if checkpoint_manager is not None:
             try:
                 payload = checkpoint_manager.load_checkpoint(str(checkpoint_dir))
-            except RuntimeError:
+            except (RuntimeError, FileNotFoundError):
                 return None
-            latest = checkpoint_manager._get_latest_checkpoint(checkpoint_dir)
-            if latest:
-                print(f"[Checkpoint] loaded <- {Path(latest).name}")
+            version = payload.get("checkpoint_version")
+            if version is not None:
+                print(f"[Checkpoint] loaded <- v{version}")
+            else:
+                print("[Checkpoint] loaded <- latest")
             return payload
 
         files = sorted(checkpoint_dir.glob("checkpoint_*.pt"))
@@ -290,7 +278,6 @@ class RunnerScript:
             self._print_state("AutoCheck saved", snapshot)
             sys.exit(0)
 
-        # Attach Ctrl+C handler
         signal.signal(signal.SIGINT, handle_sigint)
 
         try:
@@ -303,8 +290,6 @@ class RunnerScript:
             self._save_checkpoint(snapshot, checkpoint_dir, keep_last, checkpoint_manager)
             self._print_state("AutoCheck saved due to exception", snapshot)
 
-    # State printing
-
     def _print_state(self, label, state: dict):
         print(f"\n[{label}]")
         for k, v in state.items():
@@ -314,8 +299,6 @@ class RunnerScript:
                 print(f"  {k:12} = dict with {len(v)} keys")
             else:
                 print(f"  {k:12} = {type(v).__name__}")
-
-    # Process / PID helpers
 
     def _is_running(self, cm):
         pid_file = Path(cm.get(Checkpoint).save_dir) / ".autocheck.pid"

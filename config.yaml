@@ -1,6 +1,7 @@
 system:
   execution_mode: ml
   fram_schd: keras
+  run_id: run1
 
 ml_model:
   name: main_model

@@ -143,14 +143,14 @@ class TraceLayer(BaseLayer):
                     self._pending_restore[name] = snapshot[name]
                     self.logger.info(f"[RESTORE] | armed scalar | {name}")
                 else:
-                    self.logger.warning(f"[RESTORE] | scalar {name} not found in snapshot — skipped")
+                    self.logger.warning(f"[RESTORE] | scalar {name} not found in snapshot - skipped")
 
             for name in self._watched_objs:
                 if name in snapshot:
                     self._pending_restore[name] = snapshot[name]
                     self.logger.info(f"[RESTORE] | armed object | {name}")
                 else:
-                    self.logger.warning(f"[RESTORE] | object {name} not found in snapshot — skipped")
+                    self.logger.warning(f"[RESTORE] | object {name} not found in snapshot - skipped")
 
     # ------------------------------------------------------------------
     # Trace hook internals
@@ -190,9 +190,13 @@ class TraceLayer(BaseLayer):
         for name, value in locals_.items():
             if name in self._watched_vars and isinstance(value, (int, float)):
                 found_scalars[name] = value
-            if (name in self._watched_objs and name not in self._objects
-                    and (hasattr(value, "state_dict") or  hasattr(value, "save"))
-                    and callable(getattr(value, "state_dict"))):
+            has_state_dict = hasattr(value, "state_dict") and callable(getattr(value, "state_dict"))
+            has_keras_save = hasattr(value, "save") and callable(getattr(value, "save"))
+            if (
+                name in self._watched_objs
+                and name not in self._objects
+                and (has_state_dict or has_keras_save)
+            ):
                 found_objects[name] = value
 
         if not found_scalars and not found_objects:
@@ -207,7 +211,7 @@ class TraceLayer(BaseLayer):
                     frame.f_locals[name] = saved
                     found_scalars[name] = saved
                     needs_sync = True
-                    self.logger.info(f"[RESTORE] | frame writeback | {name} → {saved}")
+                    self.logger.info(f"[RESTORE] | frame writeback | {name} -> {saved}")
 
         if needs_sync:
             ctypes.pythonapi.PyFrame_LocalsToFast(
