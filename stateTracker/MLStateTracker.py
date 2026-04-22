@@ -102,7 +102,7 @@ class MLStateTracker(BaseTracker):
                         f"type={type(prov_state).__name__}"
                     )
                     raise TypeError("Provider state must be a dictionary.")
-                required_fields = ["model_state", "optimizer_state", "epoch", "global_step", "batch_idx"]
+                required_fields = ["epoch", "global_step", "batch_idx"]
                 missing = [f for f in required_fields if f not in prov_state]
                 if missing:
                     self.logger.error(f"[UPDATE_ALL] | Missing checkpoint fields | missing={missing}")
@@ -112,8 +112,8 @@ class MLStateTracker(BaseTracker):
                 old_step = self.global_step
                 old_batch = self.batch_idx
 
-                self.model_state = prov_state["model_state"]
-                self.optimizer_state = prov_state["optimizer_state"]
+                self.model_state = prov_state.get("model_state", {})
+                self.optimizer_state = prov_state.get("optimizer_state", {})
                 self.scheduler_state = prov_state.get("scheduler_state", None)
                 self.epoch = prov_state["epoch"]
                 self.global_step = prov_state["global_step"]

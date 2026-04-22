@@ -107,7 +107,11 @@ class TraceLayer(BaseLayer):
             result: Dict[str, Any] = dict(self._captured)
             for name, obj in self._objects.items():
                 try:
-                    result[name] = copy.deepcopy(obj.state_dict())
+                    if hasattr(obj, "state_dict"):
+                        result[name] = copy.deepcopy(obj.state_dict())
+                    else:
+                        # Keras → store the object itself
+                        result[name] = obj
                     self.logger.debug(f"[SNAPSHOT] | serialized {name}")
                 except Exception as e:
                     self.logger.error(f"[SNAPSHOT] | failed to serialize {name} | reason={e}")
@@ -139,14 +143,14 @@ class TraceLayer(BaseLayer):
                     self._pending_restore[name] = snapshot[name]
                     self.logger.info(f"[RESTORE] | armed scalar | {name}")
                 else:
-                    self.logger.warning(f"[RESTORE] | scalar {name} not found in snapshot — skipped")
+                    self.logger.warning(f"[RESTORE] | scalar {name} not found in snapshot - skipped")
 
             for name in self._watched_objs:
                 if name in snapshot:
                     self._pending_restore[name] = snapshot[name]
                     self.logger.info(f"[RESTORE] | armed object | {name}")
                 else:
-                    self.logger.warning(f"[RESTORE] | object {name} not found in snapshot — skipped")
+                    self.logger.warning(f"[RESTORE] | object {name} not found in snapshot - skipped")
 
     # ------------------------------------------------------------------
     # Trace hook internals
@@ -186,11 +190,12 @@ class TraceLayer(BaseLayer):
         for name, value in locals_.items():
             if name in self._watched_vars and isinstance(value, (int, float)):
                 found_scalars[name] = value
+            has_state_dict = hasattr(value, "state_dict") and callable(getattr(value, "state_dict"))
+            has_keras_save = hasattr(value, "save") and callable(getattr(value, "save"))
             if (
-                    name in self._watched_objs
-                    and name not in self._objects
-                    and hasattr(value, "state_dict")
-                    and callable(getattr(value, "state_dict"))
+                name in self._watched_objs
+                and name not in self._objects
+                and (has_state_dict or has_keras_save)
             ):
                 found_objects[name] = value
 
@@ -229,7 +234,9 @@ class TraceLayer(BaseLayer):
                     if name in self._pending_restore:
                         saved = self._pending_restore.pop(name)
                         try:
-                            obj.load_state_dict(saved)
+                            if hasattr(obj, "load_state_dict"):
+                                obj.load_state_dict(saved)
+                            # else: skip (Keras handled externally)
                             self.logger.info(f"[RESTORE] | load_state_dict applied | {name}")
                         except Exception as e:
                             self.logger.error(f"[RESTORE] | load_state_dict failed | name={name} | reason={e}")

@@ -21,6 +21,14 @@ class System(YamlObj):
         if not self.fram_schd:
             raise ValueError("fram_schd is required for both ML and HPC modes")
         self.fram_schd = self.fram_schd.lower()
+        if self.fram_schd in {"keras", "tf"}:
+            self.fram_schd = "tensorflow"
+
+        if not isinstance(self.run_id, str):
+            raise ValueError("run_id must be a string")
+        self.run_id = self.run_id.strip()
+        if not self.run_id:
+            raise ValueError("run_id cannot be empty")
 
         # ML mode validations
         if self.execution_mode == ExecutionMode.ML.value:
