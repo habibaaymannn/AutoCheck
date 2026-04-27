@@ -1,6 +1,6 @@
 from config.YamlOBJ.YamlObj import YamlObj
 from dataclasses import dataclass
-from enums import ExecutionMode, MLFramework, HPCScheduler
+from Utilites.enums import ExecutionMode, MLFramework, HPCScheduler
 
 @dataclass
 class System(YamlObj):

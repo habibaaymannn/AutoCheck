@@ -8,7 +8,7 @@ from config.YamlOBJ.Notify import Notify
 from config.YamlOBJ.HPC import HPC
 from config.YamlOBJ.HPCState import HPCState
 from config.YamlOBJ.ML import ML
-from enums import ExecutionMode
+from Utilites.enums import ExecutionMode
 
 class ConfigParseError(Exception):
     pass
@@ -66,12 +66,12 @@ class ConfigManager:
         # Step 2: system is always required and parsed first
         if "system" not in raw:
             raise ConfigParseError("Missing required 'system' section in config")
-        
+
         #step 3: Type Checks before parsing
         for section in raw:
             self._ensure_mapping(raw, section)
 
-        
+
         #Parse system first to determine mode
         system = System(**raw["system"])
         self.configs.append(system)
@@ -93,13 +93,13 @@ class ConfigManager:
             raise ConfigParseError(
                 f"Forbidden section(s) for '{mode}' mode: {sorted(forbidden)}"
             )
-        
+
         # Parse sections in deterministic order
         section_parsers: Dict[str, Callable[[Dict[str, Any], System], YamlObj]] = {
-            "ml_model": self.parse_ml,
-            "checkpoint": self.parse_checkpoint,
-            "notify": self.parse_notify,
-            "hpc": self.parse_hpc,
+            "ml_model": self._parse_ml,
+            "checkpoint": self._parse_ckpt,
+            "notify": self._parse_notify,
+            "hpc": self._parse_hpc,
         }
 
         allowed_sections = required_sections | OPTIONAL_SECTIONS
@@ -109,33 +109,6 @@ class ConfigManager:
             if key not in allowed_sections:
                 continue
             self.configs.append(section_parsers[key](raw[key], system))
-
-    def parse_ml(self, data: dict, system: System) -> ML:
-        if "name" not in data:
-            raise ConfigParseError("Missing required field 'ml_model.name'")
-        return ML(name=data["name"], ml_system=system)
-
-    def parse_checkpoint(self, data: dict, system: System) -> Checkpoint:
-        return Checkpoint(**data)
-
-    def parse_notify(self, data: dict, system: System) -> Notify:
-        return Notify(**data)
-
-    def parse_hpc(self, data: dict, system: System) -> HPC:
-        tracked_raw = data.get("tracked_states", [])
-        if not isinstance(tracked_raw, list):
-            raise ConfigParseError("'hpc.tracked_states' must be a list")
-
-        tracked_states = []
-        for i, s in enumerate(tracked_raw):
-            if not isinstance(s, dict):
-                raise ConfigParseError(f"'hpc.tracked_states[{i}]' must be a mapping/object")
-            for field in ("name", "type", "source"):
-                if field not in s:
-                    raise ConfigParseError(f"Missing required field 'hpc.tracked_states[{i}].{field}'")
-            tracked_states.append(HPCState(name=s["name"], type_=s["type"], source=s["source"]))
-
-        return HPC(tracked_states=tracked_states)
 
     def validate(self) -> bool:
         if not self.configs:
@@ -165,20 +138,54 @@ class ConfigManager:
             raise ConfigValidationError("Configuration validation failed:\n- " + "\n- ".join(errors))
         return True
 
-
-    def get(self, cls: type) -> YamlObj:
+    def get(self, cls: type) -> type:
         """Return the first config object that is an instance of *cls*."""
         for obj in self.configs:
             if isinstance(obj, cls):
                 return obj
         raise KeyError(f"No config of type '{cls.__name__}' found")
 
-    @property
-    def mode(self) -> str:
-        mode= self.get(System).execution_mode
-        return mode.value if hasattr(mode,"value")else mode
-    
+    def get_ckpt_manager_type(self) -> str:
+        return self.get(System).fram_schd
+
+    def get_tracked_states(self) -> List[HPCState]:
+        return self.get(HPC).tracked_states
+
+    def get_ckpt_config(self) -> Dict[str, Any]:
+        return self.get(Checkpoint).get_integration()
+
+    def get_mode(self) -> str:
+        mode = self.get(System).execution_mode
+        return mode.value if hasattr(mode, "value")else mode
+
     @staticmethod
     def _ensure_mapping(raw: dict, section: str) -> None:
         if not isinstance(raw.get(section), dict):
             raise ConfigParseError(f"Section '{section}' must be a mapping/object")
+
+    def _parse_ml(self, data: dict, sys: System) -> ML:
+        if "name" not in data:
+            raise ConfigParseError("Missing required field 'ml_model.name'")
+        return ML(name=data["name"], ml_system=sys)
+
+    def _parse_ckpt(self, data: dict) -> Checkpoint:
+        return Checkpoint(**data)
+
+    def _parse_notify(self, data: dict) -> Notify:
+        return Notify(**data)
+
+    def _parse_hpc(self, data: dict) -> HPC:
+        tracked_raw = data.get("tracked_states", [])
+        if not isinstance(tracked_raw, list):
+            raise ConfigParseError("'hpc.tracked_states' must be a list")
+
+        tracked_states = []
+        for i, s in enumerate(tracked_raw):
+            if not isinstance(s, dict):
+                raise ConfigParseError(f"'hpc.tracked_states[{i}]' must be a mapping/object")
+            for field in ("name", "type", "source"):
+                if field not in s:
+                    raise ConfigParseError(f"Missing required field 'hpc.tracked_states[{i}].{field}'")
+            tracked_states.append(HPCState(name=s["name"], type_=s["type"], source=s["source"]))
+
+        return HPC(tracked_states=tracked_states)

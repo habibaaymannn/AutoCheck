@@ -1,6 +1,8 @@
+from typing import Dict, Any
+
 from config.YamlOBJ.YamlObj import YamlObj
 from dataclasses import dataclass
-from enums import CheckpointMethod
+from Utilites.enums import CheckpointMethod
 
 @dataclass
 class Checkpoint(YamlObj):
@@ -8,8 +10,15 @@ class Checkpoint(YamlObj):
     interval: int
     max_session_time: int
     save_dir: str
+    program_path: str
     safety_buffer_seconds: int = 15
     keep_last: int = 3
+
+    def get_integration(self) -> Dict[str, Any]:
+        return {"method":self.method,
+                "interval":self.interval, "max_session_time":self.max_session_time,
+                "save_dir":self.save_dir, "safety_buffer_seconds":self.safety_buffer_seconds,
+                "keep_last":self.keep_last, "program_path":self.program_path}
 
     def validate(self) -> bool:
         if not isinstance(self.method,str):
@@ -37,5 +46,8 @@ class Checkpoint(YamlObj):
 
         if not self.save_dir:
             raise ValueError("save_dir is required")
+
+        if not self.program_path:
+            raise ValueError("program_path is required")
 
         return True

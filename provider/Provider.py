@@ -2,7 +2,7 @@ from typing import Any, Dict, List
 
 from layers.SignalLayer import SignalLayer
 from layers.TraceLayer import TraceLayer
-from logger import setup_logger
+from Utilites.logger import setup_logger
 from layers.BaseLayer import BaseLayer
 
 

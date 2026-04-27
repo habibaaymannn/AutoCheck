@@ -7,7 +7,7 @@ import threading
 from typing import Any, Dict, List, Set
 
 from layers.BaseLayer import BaseLayer
-from logger import setup_logger
+from Utilites.logger import setup_logger
 
 
 class TraceLayer(BaseLayer):

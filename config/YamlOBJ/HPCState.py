@@ -1,4 +1,4 @@
-from enums import StateType
+from Utilites.enums import StateType
 
 class HPCState:
     name: str
