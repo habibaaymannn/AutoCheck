@@ -9,6 +9,7 @@ class ExecutionMode(str, Enum):
 class MLFramework(str, Enum):
     PYTORCH = "pytorch"
     TENSORFLOW = "tensorflow"
+    SKLEARN = "sklearn"
 
 
 class HPCScheduler(str, Enum):

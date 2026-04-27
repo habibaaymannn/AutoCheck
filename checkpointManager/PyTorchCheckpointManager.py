@@ -47,11 +47,7 @@ class PyTorchCheckpointManager(CheckpointManager):
         deleted when the limit is exceeded.  ``None`` means keep all.
     """
 
-    def __init__(
-        self,
-        checkpoint_dir: str,
-        max_to_keep: Optional[int] = None,
-    ) -> None:
+    def __init__(self, checkpoint_dir: str, max_to_keep: Optional[int] = None) -> None:
         self._dir = Path(checkpoint_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
         self.max_to_keep = max_to_keep
@@ -60,13 +56,7 @@ class PyTorchCheckpointManager(CheckpointManager):
     # Public API — high-level helpers (called by RunnerScript / AC)
     # ------------------------------------------------------------------
 
-    def save(
-        self,
-        step: int,
-        model: nn.Module,
-        optimizer: optim.Optimizer,
-        **kwargs: Any,
-    ) -> str:
+    def save(self, step: int, model: nn.Module, optimizer: optim.Optimizer, **kwargs: Any) -> str:
         """
         Save a full training checkpoint.
 
@@ -101,12 +91,7 @@ class PyTorchCheckpointManager(CheckpointManager):
 
         return str(path)
 
-    def load(
-        self,
-        model: nn.Module,
-        optimizer: Optional[optim.Optimizer] = None,
-        checkpoint_path: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    def load(self, model: nn.Module, optimizer: Optional[optim.Optimizer] = None, checkpoint_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Load a checkpoint and restore model (and optionally optimizer) state.
 
@@ -168,11 +153,7 @@ class PyTorchCheckpointManager(CheckpointManager):
     # CheckpointManager abstract interface
     # ------------------------------------------------------------------
 
-    def save_checkpoint(
-        self,
-        state: Dict[str, Any],
-        save_dir: str,
-    ) -> str:
+    def save_checkpoint(self, state: Dict[str, Any], save_dir: str) -> str:
         """
         Persist an arbitrary *state* dict to *save_dir*.
 
@@ -199,10 +180,7 @@ class PyTorchCheckpointManager(CheckpointManager):
             self._prune(directory=target_dir)
         return str(path)
 
-    def load_checkpoint(
-        self,
-        save_dir: str,
-    ) -> Dict[str, Any]:
+    def load_checkpoint(self, save_dir: str) -> Dict[str, Any]:
         """
         Recover the most recent checkpoint from *save_dir*.
 

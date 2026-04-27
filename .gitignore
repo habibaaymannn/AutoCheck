@@ -13,13 +13,13 @@ venv/
 Description.md
 =======
 
-tracing_how/
+Testing_phase/tracing_how/
 >>>>>>> Stashed changes
 # Ignore logs
 logs/
 
 # Ignore checkpoints
-checkpoints/
+Testing_phase/checkpoints/
 
 # Ignore raw dataset files
 data/
@@ -30,7 +30,7 @@ __pycache__/
 logs/
 
 # Ignore checkpoints
-checkpoints/
+Testing_phase/checkpoints/
 
 # Ignore raw dataset files
 data/
@@ -39,5 +39,5 @@ data/
 __pycache__/
 *.pyc
 
-model_tensorflow.py
-model_sklearn.py
+Testing_phase/model_tensorflow.py
+Testing_phase/model_sklearn.py

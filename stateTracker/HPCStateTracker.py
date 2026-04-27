@@ -1,19 +1,19 @@
 from __future__ import annotations
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Optional, List
 
 from config.YamlOBJ.HPCState import HPCState
-from enums import CheckpointMethod
-from error import (
+from Utilites.enums import CheckpointMethod
+from Utilites.error import (
     InvalidTrackedStateSpecError,
 
 )
 from provider.Provider import Provider
 from stateTracker.BaseTracker import BaseTracker
-from logger import setup_logger
+from Utilites.logger import setup_logger
 
 class HPCStateTracker(BaseTracker):
     def __init__(
-            self, method: str, program_path: str, tracked_states:Sequence[HPCState], scheduler: Optional[str] = None, run_id: str = "default"):
+            self, method: str, program_path: str, tracked_states: List[HPCState], scheduler: Optional[str] = None, run_id: str = "default"):
         super().__init__(method=method, program_path=program_path, run_id=run_id)
         self.logger = setup_logger(self.__class__.__name__, run_id)
         self.scheduler: Optional[str] = scheduler
@@ -24,26 +24,22 @@ class HPCStateTracker(BaseTracker):
         self.last_completed_unit: int=0
         self.scheduler_status: str='unknown'
         self.latest_checkpoint_path: Optional[str]=None
-        self._init_provider()
         self.validate()
         self.logger.info(f"HPCStateTracker initialized | run_id={run_id} | method={method}")
 
-
-    def _init_provider(self):
+    def init_provider(self):
         poll_list = [str(self.method), "iteration", "last_completed_unit"]
         target_list = ["scheduler"]
         temp = [x.name for x in self.states]
         target_list.extend(temp)
         self.provider = Provider(self.program_path, self.method, poll_list, target_list)
 
-    def set_states(self, tracked_states: Sequence[HPCState]) -> None:
+    def set_states(self, tracked_states: List[HPCState]) -> None:
         with self.lock:
             self.states = list(tracked_states)
             self.validate()
             self.logger.info(f"Tracked states updated | states={[s.name for s in self.states]}")
 
-    
-    
     def update_ckpt_method(self) -> None:
         with self.lock:
             if self.provider is None:
@@ -64,7 +60,6 @@ class HPCStateTracker(BaseTracker):
                 f"Checkpoint fields updated | iteration={self.iteration} "
                 f"last_completed_unit={self.last_completed_unit}"
             )
-
 
     def update_all_from_prov(self) -> None:
         with self.lock:
@@ -98,7 +93,6 @@ class HPCStateTracker(BaseTracker):
                 f"last_completed_unit={self.last_completed_unit} | scheduler_status={self.scheduler_status}"
             )
 
-
     def snapshot(self) -> Dict[str, Any]:
         self.update_all_from_prov()
         with self.lock:
@@ -120,8 +114,6 @@ class HPCStateTracker(BaseTracker):
             self.logger.debug("Snapshot keys: %s", list(snap.keys()))
             return snap
 
-        
-        
     def set_all_from_ckpt(self, state: Dict[str, Any]) -> None:
         with self.lock:
             if not isinstance(state, dict):

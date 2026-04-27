@@ -14,7 +14,7 @@ class BaseTracker(ABC):
         self.program_path: str = program_path
 
     @abstractmethod
-    def _init_provider(self):
+    def init_provider(self):
         pass
 
     def run_tracer(self):

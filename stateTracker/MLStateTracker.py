@@ -2,13 +2,13 @@ from typing import Dict, Any, Optional
 
 from provider.Provider import Provider
 from stateTracker.BaseTracker import BaseTracker
-from logger import setup_logger
+from Utilites.logger import setup_logger
 
 _INT_FIELDS = ("epoch", "global_step", "batch_idx")
 
 
 class MLStateTracker(BaseTracker):
-    def __init__(self, method: str, program_path: str ,run_id: str = "default"):
+    def __init__(self, method: str, program_path: str, run_id: str = "default"):
         super().__init__(method=method, program_path=program_path, run_id=run_id)
         self.logger = setup_logger(self.__class__.__name__, run_id)
         self.model_state: Dict[str, Any] = {}
@@ -19,10 +19,10 @@ class MLStateTracker(BaseTracker):
         self.batch_idx: int = 0
         self.rng_state: Dict[str, Any] = {}
         self.amp: Dict[str, Any] = {}
-        self._init_provider()
+        self.validate()
         self.logger.info(f"MLStateTracker initialised | run_id={run_id} | method={method}")
 
-    def _init_provider(self):
+    def init_provider(self):
         poll_list = ["epoch", "global_step", "batch_idx"]
         target_list = ["model", "optimizer", "scheduler", "rng_state", "amp"]
         self.provider = Provider(self.program_path, self.method, poll_list, target_list)
